@@ -1,11 +1,16 @@
 package cron
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
+	redisClient "github.com/go-redis/redis/v8"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/sukalov/mshkbot/internal/redis"
 )
 
 type ScheduledEvent struct {
@@ -38,7 +43,7 @@ func NewScheduleManager() *ScheduleManager {
 	return &ScheduleManager{}
 }
 
-func (sm *ScheduleManager) GetDefaultEvents() []*ScheduledEvent {
+func getHardcodedDefaults() []*ScheduledEvent {
 	return []*ScheduledEvent{
 		{
 			ID:            "monday",
@@ -74,6 +79,62 @@ func (sm *ScheduleManager) GetDefaultEvents() []*ScheduledEvent {
 			Intro:         "начали запись на турнир в ладье. нажмите /checkin чтобы записаться",
 		},
 	}
+}
+
+func (sm *ScheduleManager) GetDefaultEvents() []*ScheduledEvent {
+	ctx := context.Background()
+	data, err := redis.Client.Get(ctx, "schedule_defaults").Bytes()
+	if err != nil {
+		if err == redisClient.Nil {
+			return getHardcodedDefaults()
+		}
+		log.Printf("failed to get schedule defaults from redis: %v", err)
+		return getHardcodedDefaults()
+	}
+
+	var events []*ScheduledEvent
+	if err := json.Unmarshal(data, &events); err != nil {
+		log.Printf("failed to unmarshal schedule defaults: %v", err)
+		return getHardcodedDefaults()
+	}
+
+	return events
+}
+
+func (sm *ScheduleManager) SaveDefaultEvents(events []*ScheduledEvent) error {
+	ctx := context.Background()
+	data, err := json.Marshal(events)
+	if err != nil {
+		return err
+	}
+	return redis.Client.Set(ctx, "schedule_defaults", data, 0).Err()
+}
+
+func (sm *ScheduleManager) SaveCurrentAsDefaults() error {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	if sm.current == nil {
+		return fmt.Errorf("no current schedule")
+	}
+
+	cleanEvents := make([]*ScheduledEvent, len(sm.current.Events))
+	for i, e := range sm.current.Events {
+		cleanEvents[i] = &ScheduledEvent{
+			ID:            e.ID,
+			Day:           e.Day,
+			Weekday:       e.Weekday,
+			StartHour:     e.StartHour,
+			EndHour:       e.EndHour,
+			Limit:         e.Limit,
+			LichessLimit:  e.LichessLimit,
+			ChesscomLimit: e.ChesscomLimit,
+			Intro:         e.Intro,
+			Deleted:       false,
+		}
+	}
+
+	return sm.SaveDefaultEvents(cleanEvents)
 }
 
 func (sm *ScheduleManager) InitWeekSchedule() {
@@ -286,7 +347,7 @@ func (sm *ScheduleManager) FormatScheduleMessage() string {
 		return "расписание не инициализировано"
 	}
 
-	msg := "📅 *расписание турниров на неделю*\n\n"
+	msg := "*расписание турниров на неделю*\n\n"
 
 	for _, e := range sm.current.Events {
 		statusIcon := "✅"
@@ -300,7 +361,7 @@ func (sm *ScheduleManager) FormatScheduleMessage() string {
 			msg += fmt.Sprintf(" | lichess<%d, chesscom<%d", e.LichessLimit, e.ChesscomLimit)
 		}
 		msg += "\n"
-		msg += fmt.Sprintf("   текст: _%s_\n\n", truncateString(e.Intro, 50))
+		msg += fmt.Sprintf("   текст: _%s_\n\n", truncateString(e.Intro, 150))
 	}
 
 	if sm.current.Approved {
@@ -323,11 +384,14 @@ func truncateString(s string, maxLen int) string {
 func GetScheduleMainKeyboard() tgbotapi.InlineKeyboardMarkup {
 	return tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("✅ всё верно", "schedule:approve"),
+			tgbotapi.NewInlineKeyboardButtonData("всё верно", "schedule:approve"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("✏️ редактировать", "schedule:edit"),
-			tgbotapi.NewInlineKeyboardButtonData("🗑 удалить", "schedule:delete"),
+			tgbotapi.NewInlineKeyboardButtonData("редактировать", "schedule:edit"),
+			tgbotapi.NewInlineKeyboardButtonData("удалить", "schedule:delete"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("сохранить как дефолт", "schedule:save_defaults"),
 		),
 	)
 }
@@ -340,7 +404,7 @@ func GetScheduleSelectEventKeyboard(action string) tgbotapi.InlineKeyboardMarkup
 			tgbotapi.NewInlineKeyboardButtonData("среда", fmt.Sprintf("schedule:%s:wednesday", action)),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("⬅️ назад", "schedule:back"),
+			tgbotapi.NewInlineKeyboardButtonData("<< назад", "schedule:back"),
 		),
 	)
 }
@@ -353,9 +417,9 @@ func (sm *ScheduleManager) GetDeleteEventKeyboard() tgbotapi.InlineKeyboardMarku
 	for _, e := range sm.current.Events {
 		label := e.Day
 		if e.Deleted {
-			label = "🔄 " + e.Day + " (восстановить)"
+			label = "[+] " + e.Day
 		} else {
-			label = "🗑 " + e.Day
+			label = "[-] " + e.Day
 		}
 		buttons = append(buttons, tgbotapi.NewInlineKeyboardButtonData(label, fmt.Sprintf("schedule:delete_event:%s", e.ID)))
 	}
@@ -363,7 +427,7 @@ func (sm *ScheduleManager) GetDeleteEventKeyboard() tgbotapi.InlineKeyboardMarku
 	return tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(buttons...),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("⬅️ назад", "schedule:back"),
+			tgbotapi.NewInlineKeyboardButtonData("<< назад", "schedule:back"),
 		),
 	)
 }
@@ -381,7 +445,7 @@ func GetScheduleEditFieldKeyboard(eventID string) tgbotapi.InlineKeyboardMarkup 
 			tgbotapi.NewInlineKeyboardButtonData("текст объявления", fmt.Sprintf("schedule:field:%s:intro", eventID)),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("⬅️ назад", "schedule:back"),
+			tgbotapi.NewInlineKeyboardButtonData("<< назад", "schedule:back"),
 		),
 	)
 }
@@ -389,7 +453,7 @@ func GetScheduleEditFieldKeyboard(eventID string) tgbotapi.InlineKeyboardMarkup 
 func GetScheduleBackKeyboard() tgbotapi.InlineKeyboardMarkup {
 	return tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("⬅️ назад", "schedule:back"),
+			tgbotapi.NewInlineKeyboardButtonData("<< назад", "schedule:back"),
 		),
 	)
 }

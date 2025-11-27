@@ -102,6 +102,12 @@ func (b *Bot) GetAdminGroupID() int64 {
 	return b.adminGroupID
 }
 
+func (b *Bot) ForwardMessage(toChatID, fromChatID int64, messageID int) error {
+	forward := tgbotapi.NewForward(toChatID, fromChatID, messageID)
+	_, err := b.Client.Send(forward)
+	return err
+}
+
 func (b *Bot) refreshAdminList() {
 	config := tgbotapi.ChatAdministratorsConfig{
 		ChatConfig: tgbotapi.ChatConfig{

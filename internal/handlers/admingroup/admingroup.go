@@ -49,7 +49,7 @@ func GetHandlers(s *cron.Scheduler) bot.HandlerSet {
 }
 
 func handleHelp(b *bot.Bot, update tgbotapi.Update) error {
-	return b.SendMessage(update.Message.Chat.ID, "команды администратора:\n\n/tournament - показать состояние турнира\n\n/send_schedule - показать расписание на неделю (отправляется автоматически в воскресенье 15:00)\n\n/suspend_from_green - отстранить пользователя от зелёных турниров\n\n/admit_to_green - допустить пользователя к зелёным турнирам\n\n/ban_player - забанить пользователя\n\n/unban_player - разбанить пользователя")
+	return b.SendMessage(update.Message.Chat.ID, "команды администратора:\n\n/tournament - показать состояние турнира\n\n/send_schedule - показать расписание на неделю (сбрасывается автоматически в воскресенье 15:00)\n\n/suspend_from_green - отстранить пользователя от зелёных турниров\n\n/admit_to_green - допустить пользователя к зелёным турнирам\n\n/ban_player - забанить пользователя\n\n/unban_player - разбанить пользователя")
 }
 
 func handleTournamentJSON(b *bot.Bot, update tgbotapi.Update) error {
@@ -466,6 +466,8 @@ func handleScheduleCallback(b *bot.Bot, update tgbotapi.Update) error {
 			return fmt.Errorf("missing event id or field")
 		}
 		return handleScheduleSelectField(b, chatID, messageID, parts[2], parts[3])
+	case "save_defaults":
+		return handleScheduleSaveDefaults(b, chatID, messageID)
 	}
 
 	return nil
@@ -477,6 +479,18 @@ func handleScheduleApprove(b *bot.Bot, chatID int64, messageID int) error {
 
 	message := scheduler.ScheduleManager.FormatScheduleMessage()
 	return b.EditMessage(chatID, messageID, message)
+}
+
+func handleScheduleSaveDefaults(b *bot.Bot, chatID int64, messageID int) error {
+	if err := scheduler.ScheduleManager.SaveCurrentAsDefaults(); err != nil {
+		return b.SendMessage(chatID, fmt.Sprintf("ошибка сохранения: %v", err))
+	}
+
+	message := scheduler.ScheduleManager.FormatScheduleMessage()
+	message += "\n\n*текущие настройки сохранены как дефолт*"
+	keyboard := cron.GetScheduleMainKeyboard()
+
+	return b.EditMessageWithButtons(chatID, messageID, message, keyboard)
 }
 
 func handleScheduleShowEditEvents(b *bot.Bot, chatID int64, messageID int) error {

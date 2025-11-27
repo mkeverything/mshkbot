@@ -259,7 +259,7 @@ func handlePrivateMessage(b *bot.Bot, update tgbotapi.Update) error {
 			return fmt.Errorf("failed to update state: %w", err)
 		}
 
-		return b.SendMessage(chatID, fmt.Sprintf("отлично! регистрация завершена. ваш никнейм: %s\n\nтеперь можете записываться на турниры в чате @moscowchessclub", savedName))
+		return b.SendMessage(chatID, fmt.Sprintf("отлично! регистрация завершена. ваш никнейм: %s\n\nтеперь можете записываться на турниры в чате @moscowchessclub\n\n для записи на турнир нажмите /checkin в чате!!", savedName))
 
 	case db.StateEditingSavedName:
 		newName := utils.Transliterate(update.Message.Text)
@@ -289,9 +289,47 @@ func handlePrivateMessage(b *bot.Bot, update tgbotapi.Update) error {
 
 	default:
 		log.Printf("private message from %d: %s", update.Message.From.ID, update.Message.Text)
+		forwardUnparsableMessage(b, update)
 	}
 
 	return nil
+}
+
+func forwardUnparsableMessage(b *bot.Bot, update tgbotapi.Update) {
+	adminChatID := b.GetAdminGroupID()
+	if adminChatID == 0 {
+		return
+	}
+
+	user := update.Message.From
+	userLink := fmt.Sprintf("[%s %s](tg://user?id=%d)", user.FirstName, user.LastName, user.ID)
+	if user.UserName != "" {
+		userLink = fmt.Sprintf("[%s %s](tg://user?id=%d) (@%s)", user.FirstName, user.LastName, user.ID, user.UserName)
+	}
+
+	dbUser, err := db.GetByChatID(user.ID)
+	var dbInfo string
+	if err == nil {
+		dbInfo = fmt.Sprintf("\nв базе: %s", dbUser.SavedName)
+		if dbUser.Lichess != nil {
+			dbInfo += fmt.Sprintf(" | lichess: %s", *dbUser.Lichess)
+		}
+		if dbUser.ChessCom != nil {
+			dbInfo += fmt.Sprintf(" | chesscom: %s", *dbUser.ChessCom)
+		}
+	} else {
+		dbInfo = "\nв базе не найден"
+	}
+
+	header := fmt.Sprintf("непонятное сообщение от %s%s:", userLink, dbInfo)
+	if err := b.SendMessageWithMarkdown(adminChatID, header, true); err != nil {
+		log.Printf("failed to send header to admin chat: %v", err)
+		return
+	}
+
+	if err := b.ForwardMessage(adminChatID, update.Message.Chat.ID, update.Message.MessageID); err != nil {
+		log.Printf("failed to forward message to admin chat: %v", err)
+	}
 }
 
 func updateTournamentPlayerName(b *bot.Bot, playerID int, newName string) error {
