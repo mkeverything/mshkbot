@@ -98,6 +98,10 @@ func (b *Bot) GetMainGroupID() int64 {
 	return b.mainGroupID
 }
 
+func (b *Bot) GetAdminGroupID() int64 {
+	return b.adminGroupID
+}
+
 func (b *Bot) refreshAdminList() {
 	config := tgbotapi.ChatAdministratorsConfig{
 		ChatConfig: tgbotapi.ChatConfig{
@@ -266,6 +270,38 @@ func (b *Bot) SendMessageWithButtons(
 	msg.DisableWebPagePreview = true
 
 	_, err := b.Client.Send(msg)
+	return err
+}
+
+func (b *Bot) SendMessageWithButtonsAndGetID(
+	chatID int64,
+	text string,
+	keyboard tgbotapi.InlineKeyboardMarkup,
+) (int, error) {
+	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ReplyMarkup = keyboard
+	msg.ParseMode = "Markdown"
+	msg.DisableWebPagePreview = true
+
+	sentMsg, err := b.Client.Send(msg)
+	if err != nil {
+		return 0, err
+	}
+	return sentMsg.MessageID, nil
+}
+
+func (b *Bot) EditMessageWithButtons(
+	chatID int64,
+	messageID int,
+	text string,
+	keyboard tgbotapi.InlineKeyboardMarkup,
+) error {
+	edit := tgbotapi.NewEditMessageText(chatID, messageID, text)
+	edit.ParseMode = "Markdown"
+	edit.DisableWebPagePreview = true
+	edit.ReplyMarkup = &keyboard
+
+	_, err := b.Client.Send(edit)
 	return err
 }
 

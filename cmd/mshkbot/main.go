@@ -46,11 +46,11 @@ func main() {
 	}
 
 	// create scheduler
-	scheduler := cron.New(botInstance, mainGroupID)
+	scheduler := cron.New(botInstance, mainGroupID, adminGroupID)
 
 	// get handlers from each package
 	mainGroupHandlers := maingroup.GetHandlers()
-	adminGroupHandlers := admingroup.GetHandlers()
+	adminGroupHandlers := admingroup.GetHandlers(scheduler)
 	privateHandlers := privatechat.GetHandlers()
 
 	// start bot and scheduler in goroutines

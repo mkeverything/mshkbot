@@ -2,6 +2,7 @@ package cron
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 
@@ -9,10 +10,12 @@ import (
 )
 
 type Scheduler struct {
-	bot         *bot.Bot
-	mainGroupID int64
-	stopChan    chan struct{}
-	timezone    *time.Location
+	bot             *bot.Bot
+	mainGroupID     int64
+	adminGroupID    int64
+	stopChan        chan struct{}
+	timezone        *time.Location
+	ScheduleManager *ScheduleManager
 }
 
 // scheduledTask represents a task that runs at a specific time each week
@@ -23,41 +26,45 @@ type scheduledTask struct {
 	handler func()
 }
 
-func New(bot *bot.Bot, mainGroupID int64) *Scheduler {
-	// moscow timezone (utc+3)
+func New(bot *bot.Bot, mainGroupID, adminGroupID int64) *Scheduler {
 	moscowTZ := time.FixedZone("moscow", 3*60*60)
 
 	return &Scheduler{
-		bot:         bot,
-		mainGroupID: mainGroupID,
-		stopChan:    make(chan struct{}),
-		timezone:    moscowTZ,
+		bot:             bot,
+		mainGroupID:     mainGroupID,
+		adminGroupID:    adminGroupID,
+		stopChan:        make(chan struct{}),
+		timezone:        moscowTZ,
+		ScheduleManager: NewScheduleManager(),
 	}
 }
 
 func (s *Scheduler) Start() {
 	log.Println("starting cron scheduler")
 
-	s.scheduleWeekly(time.Monday, 15, 35, func() {
-		s.scheduledTournamentStart(26, 0, 0, "запись на южный турнир открыта. нажмите /checkin чтобы записаться")
-	})
-	s.scheduleWeekly(time.Monday, 21, 00, func() {
-		s.scheduledTournamentEnd()
+	s.scheduleWeekly(time.Sunday, 15, 0, func() {
+		s.sendSchedulePreview()
 	})
 
-	s.scheduleWeekly(time.Tuesday, 12, 00, func() {
-		s.scheduledTournamentStart(24, 1600, 1400, "открыта запись на зелёный турнир. нажмите /checkin чтобы записаться")
+	s.scheduleWeekly(time.Monday, 12, 0, func() {
+		s.scheduledTournamentStartFromSchedule(time.Monday)
+	})
+	s.scheduleWeekly(time.Monday, 21, 0, func() {
+		s.scheduledTournamentEndFromSchedule(time.Monday)
 	})
 
-	s.scheduleWeekly(time.Tuesday, 21, 00, func() {
-		s.scheduledTournamentEnd()
+	s.scheduleWeekly(time.Tuesday, 12, 0, func() {
+		s.scheduledTournamentStartFromSchedule(time.Tuesday)
+	})
+	s.scheduleWeekly(time.Tuesday, 21, 0, func() {
+		s.scheduledTournamentEndFromSchedule(time.Tuesday)
 	})
 
-	s.scheduleWeekly(time.Wednesday, 12, 00, func() {
-		s.scheduledTournamentStart(24, 0, 0, "можно записываться на турнир в ладье. нажмите /checkin чтобы записаться")
+	s.scheduleWeekly(time.Wednesday, 12, 0, func() {
+		s.scheduledTournamentStartFromSchedule(time.Wednesday)
 	})
-	s.scheduleWeekly(time.Wednesday, 21, 00, func() {
-		s.scheduledTournamentEnd()
+	s.scheduleWeekly(time.Wednesday, 21, 0, func() {
+		s.scheduledTournamentEndFromSchedule(time.Wednesday)
 	})
 }
 
@@ -168,4 +175,62 @@ func (s *Scheduler) scheduledTournamentEnd() {
 	}
 
 	log.Printf("tournament ended and removed")
+}
+
+func (s *Scheduler) sendSchedulePreview() {
+	log.Println("sending weekly schedule preview to admin chat")
+
+	s.ScheduleManager.InitWeekSchedule()
+
+	message := s.ScheduleManager.FormatScheduleMessage()
+	keyboard := GetScheduleMainKeyboard()
+
+	messageID, err := s.bot.SendMessageWithButtonsAndGetID(s.adminGroupID, message, keyboard)
+	if err != nil {
+		log.Printf("failed to send schedule preview: %v", err)
+		return
+	}
+
+	s.ScheduleManager.SetMessageID(messageID)
+	log.Printf("schedule preview sent, message id: %d", messageID)
+}
+
+func (s *Scheduler) UpdateScheduleMessage() error {
+	messageID := s.ScheduleManager.GetMessageID()
+	if messageID == 0 {
+		return fmt.Errorf("no schedule message to update")
+	}
+
+	message := s.ScheduleManager.FormatScheduleMessage()
+	keyboard := GetScheduleMainKeyboard()
+
+	return s.bot.EditMessageWithButtons(s.adminGroupID, messageID, message, keyboard)
+}
+
+func (s *Scheduler) GetBot() *bot.Bot {
+	return s.bot
+}
+
+func (s *Scheduler) GetAdminGroupID() int64 {
+	return s.adminGroupID
+}
+
+func (s *Scheduler) scheduledTournamentStartFromSchedule(weekday time.Weekday) {
+	event := s.ScheduleManager.GetEventForWeekday(weekday)
+	if event == nil {
+		log.Printf("no approved event for %s, skipping tournament start", weekday)
+		return
+	}
+
+	s.scheduledTournamentStart(event.Limit, event.LichessLimit, event.ChesscomLimit, event.Intro)
+}
+
+func (s *Scheduler) scheduledTournamentEndFromSchedule(weekday time.Weekday) {
+	event := s.ScheduleManager.GetEventForWeekday(weekday)
+	if event == nil {
+		log.Printf("no approved event for %s, skipping tournament end", weekday)
+		return
+	}
+
+	s.scheduledTournamentEnd()
 }

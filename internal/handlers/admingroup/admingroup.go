@@ -4,18 +4,23 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/sukalov/mshkbot/internal/bot"
+	"github.com/sukalov/mshkbot/internal/cron"
 	"github.com/sukalov/mshkbot/internal/db"
 	"github.com/sukalov/mshkbot/internal/types"
 	"github.com/sukalov/mshkbot/internal/utils"
 )
 
+var scheduler *cron.Scheduler
+
 // GetHandlers returns handler set for admin group
-func GetHandlers() bot.HandlerSet {
+func GetHandlers(s *cron.Scheduler) bot.HandlerSet {
+	scheduler = s
 	return bot.HandlerSet{
 		Commands: map[string]func(b *bot.Bot, update tgbotapi.Update) error{
 			"help":                 handleHelp,
@@ -29,19 +34,22 @@ func GetHandlers() bot.HandlerSet {
 			"admit_to_green":       handleAdmitToGreen,
 			"test_transliteration": handleTestTransliteration,
 			"transliterate_all":    handleTransliterateAll,
+			"send_schedule":        handleSendSchedule,
 		},
 		Messages: []func(b *bot.Bot, update tgbotapi.Update) error{
+			handleScheduleFieldInput,
 			handleAdminMessage,
 		},
 		Callbacks: map[string]func(b *bot.Bot, update tgbotapi.Update) error{
 			"suspend_duration": handleSuspendDuration,
 			"ban_duration":     handleBanDuration,
+			"schedule":         handleScheduleCallback,
 		},
 	}
 }
 
 func handleHelp(b *bot.Bot, update tgbotapi.Update) error {
-	return b.SendMessage(update.Message.Chat.ID, "команды администратора:\n\n/tournament - показать состояние турнира\n\n/suspend_from_green - отстранить пользователя от зелёных турниров\n\n/admit_to_green - допустить пользователя к зелёным турнирам\n\n/ban_player - забанить пользователя\n\n/unban_player - разбанить пользователя")
+	return b.SendMessage(update.Message.Chat.ID, "команды администратора:\n\n/tournament - показать состояние турнира\n\n/send_schedule - показать расписание на неделю (отправляется автоматически в воскресенье 15:00)\n\n/suspend_from_green - отстранить пользователя от зелёных турниров\n\n/admit_to_green - допустить пользователя к зелёным турнирам\n\n/ban_player - забанить пользователя\n\n/unban_player - разбанить пользователя")
 }
 
 func handleTournamentJSON(b *bot.Bot, update tgbotapi.Update) error {
@@ -396,4 +404,220 @@ func handleTransliterateAll(b *bot.Bot, update tgbotapi.Update) error {
 
 	summary := fmt.Sprintf("транслитерация завершена:\n\nизменено пользователей: %d\nуведомлено: %d\nне удалось уведомить: %d", len(changedUsers), successCount, failCount)
 	return b.SendMessage(update.Message.Chat.ID, summary)
+}
+
+func handleSendSchedule(b *bot.Bot, update tgbotapi.Update) error {
+	scheduler.ScheduleManager.InitWeekSchedule()
+
+	message := scheduler.ScheduleManager.FormatScheduleMessage()
+	keyboard := cron.GetScheduleMainKeyboard()
+
+	messageID, err := b.SendMessageWithButtonsAndGetID(update.Message.Chat.ID, message, keyboard)
+	if err != nil {
+		return err
+	}
+
+	scheduler.ScheduleManager.SetMessageID(messageID)
+	return nil
+}
+
+func handleScheduleCallback(b *bot.Bot, update tgbotapi.Update) error {
+	callback := tgbotapi.NewCallback(update.CallbackQuery.ID, "")
+	if _, err := b.Request(callback); err != nil {
+		log.Printf("failed to answer callback: %v", err)
+	}
+
+	chatID := update.CallbackQuery.Message.Chat.ID
+	messageID := update.CallbackQuery.Message.MessageID
+	data := update.CallbackQuery.Data
+
+	if scheduler.ScheduleManager.GetCurrentSchedule() == nil {
+		return b.EditMessage(chatID, messageID, "расписание не инициализировано. используйте /send_schedule для создания нового")
+	}
+
+	parts := strings.Split(data, ":")
+	if len(parts) < 2 {
+		return fmt.Errorf("invalid callback data: %s", data)
+	}
+
+	action := parts[1]
+
+	switch action {
+	case "approve":
+		return handleScheduleApprove(b, chatID, messageID)
+	case "edit":
+		return handleScheduleShowEditEvents(b, chatID, messageID)
+	case "delete":
+		return handleScheduleShowDeleteEvents(b, chatID, messageID)
+	case "back":
+		return handleScheduleBack(b, chatID, messageID)
+	case "edit_event":
+		if len(parts) < 3 {
+			return fmt.Errorf("missing event id")
+		}
+		return handleScheduleSelectEditEvent(b, chatID, messageID, parts[2])
+	case "delete_event":
+		if len(parts) < 3 {
+			return fmt.Errorf("missing event id")
+		}
+		return handleScheduleDeleteEvent(b, chatID, messageID, parts[2])
+	case "field":
+		if len(parts) < 4 {
+			return fmt.Errorf("missing event id or field")
+		}
+		return handleScheduleSelectField(b, chatID, messageID, parts[2], parts[3])
+	}
+
+	return nil
+}
+
+func handleScheduleApprove(b *bot.Bot, chatID int64, messageID int) error {
+	scheduler.ScheduleManager.SetApproved(true)
+	scheduler.ScheduleManager.ClearEditingState()
+
+	message := scheduler.ScheduleManager.FormatScheduleMessage()
+	return b.EditMessage(chatID, messageID, message)
+}
+
+func handleScheduleShowEditEvents(b *bot.Bot, chatID int64, messageID int) error {
+	message := scheduler.ScheduleManager.FormatScheduleMessage()
+	message += "\n\n*выберите турнир для редактирования:*"
+	keyboard := cron.GetScheduleSelectEventKeyboard("edit_event")
+
+	return b.EditMessageWithButtons(chatID, messageID, message, keyboard)
+}
+
+func handleScheduleShowDeleteEvents(b *bot.Bot, chatID int64, messageID int) error {
+	message := scheduler.ScheduleManager.FormatScheduleMessage()
+	message += "\n\n*выберите турнир для удаления/восстановления (только на эту неделю):*"
+	keyboard := scheduler.ScheduleManager.GetDeleteEventKeyboard()
+
+	return b.EditMessageWithButtons(chatID, messageID, message, keyboard)
+}
+
+func handleScheduleBack(b *bot.Bot, chatID int64, messageID int) error {
+	scheduler.ScheduleManager.ClearEditingState()
+
+	message := scheduler.ScheduleManager.FormatScheduleMessage()
+	keyboard := cron.GetScheduleMainKeyboard()
+
+	return b.EditMessageWithButtons(chatID, messageID, message, keyboard)
+}
+
+func handleScheduleSelectEditEvent(b *bot.Bot, chatID int64, messageID int, eventID string) error {
+	event := scheduler.ScheduleManager.GetEvent(eventID)
+	if event == nil {
+		return b.EditMessage(chatID, messageID, "турнир не найден")
+	}
+
+	message := scheduler.ScheduleManager.FormatScheduleMessage()
+	message += fmt.Sprintf("\n\n*редактирование: %s*\nвыберите поле:", event.Day)
+	keyboard := cron.GetScheduleEditFieldKeyboard(eventID)
+
+	return b.EditMessageWithButtons(chatID, messageID, message, keyboard)
+}
+
+func handleScheduleDeleteEvent(b *bot.Bot, chatID int64, messageID int, eventID string) error {
+	event := scheduler.ScheduleManager.GetEvent(eventID)
+	if event == nil {
+		return b.EditMessage(chatID, messageID, "турнир не найден")
+	}
+
+	if event.Deleted {
+		scheduler.ScheduleManager.RestoreEvent(eventID)
+	} else {
+		scheduler.ScheduleManager.DeleteEvent(eventID)
+	}
+
+	message := scheduler.ScheduleManager.FormatScheduleMessage()
+	message += "\n\n*выберите турнир для удаления/восстановления (только на эту неделю):*"
+	keyboard := scheduler.ScheduleManager.GetDeleteEventKeyboard()
+
+	return b.EditMessageWithButtons(chatID, messageID, message, keyboard)
+}
+
+func handleScheduleSelectField(b *bot.Bot, chatID int64, messageID int, eventID, field string) error {
+	event := scheduler.ScheduleManager.GetEvent(eventID)
+	if event == nil {
+		return b.EditMessage(chatID, messageID, "турнир не найден")
+	}
+
+	scheduler.ScheduleManager.SetEditingEvent(eventID, field)
+
+	var fieldName string
+	var currentValue string
+
+	switch field {
+	case "limit":
+		fieldName = "лимит участников"
+		currentValue = fmt.Sprintf("%d", event.Limit)
+	case "lichess_limit":
+		fieldName = "лимит рейтинга lichess"
+		currentValue = fmt.Sprintf("%d", event.LichessLimit)
+	case "chesscom_limit":
+		fieldName = "лимит рейтинга chess.com"
+		currentValue = fmt.Sprintf("%d", event.ChesscomLimit)
+	case "intro":
+		fieldName = "текст объявления"
+		currentValue = event.Intro
+	default:
+		return fmt.Errorf("unknown field: %s", field)
+	}
+
+	message := fmt.Sprintf("*редактирование %s*\n\nполе: %s\nтекущее значение: `%s`\n\nотправьте новое значение:", event.Day, fieldName, currentValue)
+	keyboard := cron.GetScheduleBackKeyboard()
+
+	return b.EditMessageWithButtons(chatID, messageID, message, keyboard)
+}
+
+func handleScheduleFieldInput(b *bot.Bot, update tgbotapi.Update) error {
+	if update.Message == nil {
+		return nil
+	}
+
+	eventID, field := scheduler.ScheduleManager.GetEditingState()
+	if eventID == "" || field == "" {
+		return nil
+	}
+
+	text := strings.TrimSpace(update.Message.Text)
+	if text == "" {
+		return nil
+	}
+
+	var value interface{}
+	var err error
+
+	switch field {
+	case "limit", "lichess_limit", "chesscom_limit":
+		intVal, parseErr := strconv.Atoi(text)
+		if parseErr != nil {
+			return b.SendMessage(update.Message.Chat.ID, "введите число")
+		}
+		if intVal < 0 {
+			return b.SendMessage(update.Message.Chat.ID, "число должно быть положительным")
+		}
+		value = intVal
+	case "intro":
+		value = text
+	default:
+		return nil
+	}
+
+	if err = scheduler.ScheduleManager.UpdateEventField(eventID, field, value); err != nil {
+		return b.SendMessage(update.Message.Chat.ID, fmt.Sprintf("ошибка: %v", err))
+	}
+
+	scheduler.ScheduleManager.ClearEditingState()
+
+	scheduleMessageID := scheduler.ScheduleManager.GetMessageID()
+	if scheduleMessageID != 0 {
+		message := scheduler.ScheduleManager.FormatScheduleMessage()
+		keyboard := cron.GetScheduleMainKeyboard()
+		if err := b.EditMessageWithButtons(update.Message.Chat.ID, scheduleMessageID, message, keyboard); err != nil {
+			log.Printf("failed to update schedule message: %v", err)
+		}
+	}
+
+	return b.GiveReaction(update.Message.Chat.ID, update.Message.MessageID, utils.ApproveEmoji())
 }
