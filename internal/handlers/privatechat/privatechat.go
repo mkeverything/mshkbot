@@ -22,6 +22,8 @@ func GetHandlers() bot.HandlerSet {
 			"me":              handleMe,
 			"myratings":       handleMyRatings,
 			"change_nickname": handleChangeNickname,
+			"checkin":         handleCheckinInPrivate,
+			"checkout":        handleCheckinInPrivate,
 		},
 		Messages: []func(b *bot.Bot, update tgbotapi.Update) error{
 			handlePrivateMessage,
@@ -30,6 +32,10 @@ func GetHandlers() bot.HandlerSet {
 			"register": handleRegister,
 		},
 	}
+}
+
+func handleCheckinInPrivate(b *bot.Bot, update tgbotapi.Update) error {
+	return b.SendMessage(update.Message.Chat.ID, "записываться можно только в чате @moscowchessclub")
 }
 
 func handleStart(b *bot.Bot, update tgbotapi.Update) error {
