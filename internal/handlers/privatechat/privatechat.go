@@ -22,6 +22,7 @@ func GetHandlers() bot.HandlerSet {
 			"me":              handleMe,
 			"myratings":       handleMyRatings,
 			"change_nickname": handleChangeNickname,
+			"change_platform": handleChangePlatform,
 			"checkin":         handleCheckinInPrivate,
 			"checkout":        handleCheckinInPrivate,
 		},
@@ -29,7 +30,8 @@ func GetHandlers() bot.HandlerSet {
 			handlePrivateMessage,
 		},
 		Callbacks: map[string]func(b *bot.Bot, update tgbotapi.Update) error{
-			"register": handleRegister,
+			"register":        handleRegister,
+			"change_platform": handleChangePlatformCallback,
 		},
 	}
 }
@@ -125,7 +127,7 @@ func handleRegister(b *bot.Bot, update tgbotapi.Update) error {
 }
 
 func handleHelp(b *bot.Bot, update tgbotapi.Update) error {
-	return b.SendMessage(update.Message.Chat.ID, "/help — показать это сообщение\n\n/me — показать вашу информацию\n\n/myratings — показать пиковые рейтинги\n\n/change_nickname — изменить никнейм для турниров")
+	return b.SendMessage(update.Message.Chat.ID, "/help — показать это сообщение\n\n/me — показать вашу информацию\n\n/myratings — показать пиковые рейтинги\n\n/change_nickname — изменить никнейм для турниров\n\n/change_platform — изменить или добавить аккаунт lichess/chess.com")
 }
 
 func handleMe(b *bot.Bot, update tgbotapi.Update) error {
@@ -189,6 +191,77 @@ func handleChangeNickname(b *bot.Bot, update tgbotapi.Update) error {
 	}
 
 	return b.SendMessage(chatID, fmt.Sprintf("ваш текущий никнейм: %s\n\nвведите новый никнейм:", user.SavedName))
+}
+
+func handleChangePlatform(b *bot.Bot, update tgbotapi.Update) error {
+	chatID := update.Message.Chat.ID
+
+	user, err := db.GetByChatID(chatID)
+	if err != nil {
+		return b.SendMessage(chatID, "вы ещё не зарегистрированы. напишите /start для регистрации")
+	}
+
+	if user.State != db.StateCompleted {
+		return b.SendMessage(chatID, "сначала завершите регистрацию")
+	}
+
+	var currentInfo string
+	if user.Lichess != nil && *user.Lichess != "" {
+		currentInfo += fmt.Sprintf("lichess: %s\n", *user.Lichess)
+	}
+	if user.ChessCom != nil && *user.ChessCom != "" {
+		currentInfo += fmt.Sprintf("chess.com: %s\n", *user.ChessCom)
+	}
+	if currentInfo == "" {
+		currentInfo = "платформы не указаны\n"
+	}
+
+	row := []tgbotapi.InlineKeyboardButton{
+		tgbotapi.NewInlineKeyboardButtonData("lichess", "change_platform:lichess"),
+		tgbotapi.NewInlineKeyboardButtonData("chess.com", "change_platform:chesscom"),
+	}
+
+	return b.SendMessageWithButtons(chatID, fmt.Sprintf("текущие аккаунты:\n%s\nвыберите платформу для изменения:", currentInfo), tgbotapi.NewInlineKeyboardMarkup(row))
+}
+
+func handleChangePlatformCallback(b *bot.Bot, update tgbotapi.Update) error {
+	chatID := update.CallbackQuery.Message.Chat.ID
+	data := update.CallbackQuery.Data
+
+	callback := tgbotapi.NewCallback(update.CallbackQuery.ID, "")
+	if _, err := b.Request(callback); err != nil {
+		log.Printf("failed to answer callback: %v", err)
+	}
+
+	parts := strings.Split(data, ":")
+	if len(parts) < 2 {
+		return fmt.Errorf("invalid callback data: %s", data)
+	}
+
+	platform := parts[1]
+
+	switch platform {
+	case "lichess":
+		if err := b.EditMessage(chatID, update.CallbackQuery.Message.MessageID, "введите новый никнейм на lichess:"); err != nil {
+			return fmt.Errorf("failed to edit message: %w", err)
+		}
+		if err := db.UpdateState(chatID, db.StateEditingLichess); err != nil {
+			return fmt.Errorf("failed to update state: %w", err)
+		}
+
+	case "chesscom":
+		if err := b.EditMessage(chatID, update.CallbackQuery.Message.MessageID, "введите новый никнейм на chess.com:"); err != nil {
+			return fmt.Errorf("failed to edit message: %w", err)
+		}
+		if err := db.UpdateState(chatID, db.StateEditingChessCom); err != nil {
+			return fmt.Errorf("failed to update state: %w", err)
+		}
+
+	default:
+		return fmt.Errorf("unknown platform: %s", platform)
+	}
+
+	return nil
 }
 
 func handlePrivateMessage(b *bot.Bot, update tgbotapi.Update) error {
@@ -293,6 +366,64 @@ func handlePrivateMessage(b *bot.Bot, update tgbotapi.Update) error {
 
 		return nil
 
+	case db.StateEditingLichess:
+		newUsername := strings.TrimPrefix(strings.TrimSpace(update.Message.Text), "@")
+		if newUsername == "" {
+			return b.SendMessage(chatID, "юзернейм не может быть пустым")
+		}
+
+		_, err := utils.GetLichessAllTimeHigh(newUsername)
+		if err != nil {
+			return b.SendMessage(chatID, "пользователь не найден на lichess. проверьте никнейм и попробуйте ещё раз")
+		}
+
+		fullUser, err := db.GetByChatID(chatID)
+		if err != nil {
+			return b.SendMessage(chatID, "произошла ошибка, попробуйте ещё раз")
+		}
+
+		previousUsername := fullUser.Lichess
+
+		if err := db.UpdateLichessAndState(chatID, newUsername, db.StateCompleted); err != nil {
+			log.Printf("failed to update lichess username: %v", err)
+			return b.SendMessage(chatID, "произошла ошибка, попробуйте ещё раз")
+		}
+
+		if previousUsername != nil && *previousUsername != "" {
+			notifyAdminAboutPlatformChange(b, update, "lichess", *previousUsername, newUsername, fullUser)
+		}
+
+		return b.SendMessage(chatID, fmt.Sprintf("lichess аккаунт успешно изменён на: %s", newUsername))
+
+	case db.StateEditingChessCom:
+		newUsername := strings.TrimPrefix(strings.TrimSpace(update.Message.Text), "@")
+		if newUsername == "" {
+			return b.SendMessage(chatID, "юзернейм не может быть пустым")
+		}
+
+		_, err := utils.GetChessComAllTimeHigh(newUsername)
+		if err != nil {
+			return b.SendMessage(chatID, "пользователь не найден на chess.com. проверьте никнейм и попробуйте ещё раз")
+		}
+
+		fullUser, err := db.GetByChatID(chatID)
+		if err != nil {
+			return b.SendMessage(chatID, "произошла ошибка, попробуйте ещё раз")
+		}
+
+		previousUsername := fullUser.ChessCom
+
+		if err := db.UpdateChessComAndState(chatID, newUsername, db.StateCompleted); err != nil {
+			log.Printf("failed to update chesscom username: %v", err)
+			return b.SendMessage(chatID, "произошла ошибка, попробуйте ещё раз")
+		}
+
+		if previousUsername != nil && *previousUsername != "" {
+			notifyAdminAboutPlatformChange(b, update, "chess.com", *previousUsername, newUsername, fullUser)
+		}
+
+		return b.SendMessage(chatID, fmt.Sprintf("chess.com аккаунт успешно изменён на: %s", newUsername))
+
 	default:
 		log.Printf("private message from %d: %s", update.Message.From.ID, update.Message.Text)
 		forwardUnparsableMessage(b, update)
@@ -335,6 +466,40 @@ func forwardUnparsableMessage(b *bot.Bot, update tgbotapi.Update) {
 
 	if err := b.ForwardMessage(adminChatID, update.Message.Chat.ID, update.Message.MessageID); err != nil {
 		log.Printf("failed to forward message to admin chat: %v", err)
+	}
+}
+
+func notifyAdminAboutPlatformChange(b *bot.Bot, update tgbotapi.Update, platform, previousUsername, newUsername string, dbUser db.User) {
+	adminChatID := b.GetAdminGroupID()
+	if adminChatID == 0 {
+		return
+	}
+
+	tgUser := update.Message.From
+	userLink := fmt.Sprintf("[%s %s](tg://user?id=%d)", tgUser.FirstName, tgUser.LastName, tgUser.ID)
+	if tgUser.UserName != "" {
+		userLink = fmt.Sprintf("[%s %s](tg://user?id=%d) (@%s)", tgUser.FirstName, tgUser.LastName, tgUser.ID, tgUser.UserName)
+	}
+
+	var previousLink, newLink string
+	if platform == "lichess" {
+		previousLink = fmt.Sprintf("[%s](https://lichess.org/@/%s)", previousUsername, previousUsername)
+		newLink = fmt.Sprintf("[%s](https://lichess.org/@/%s)", newUsername, newUsername)
+	} else {
+		previousLink = fmt.Sprintf("[%s](https://www.chess.com/member/%s)", previousUsername, previousUsername)
+		newLink = fmt.Sprintf("[%s](https://www.chess.com/member/%s)", newUsername, newUsername)
+	}
+
+	message := fmt.Sprintf("смена аккаунта %s\n\nпользователь: %s\nник в боте: %s\n\nбыло: %s\nстало: %s",
+		platform,
+		userLink,
+		dbUser.SavedName,
+		previousLink,
+		newLink,
+	)
+
+	if err := b.SendMessageWithMarkdown(adminChatID, message, true); err != nil {
+		log.Printf("failed to send platform change notification to admin chat: %v", err)
 	}
 }
 
