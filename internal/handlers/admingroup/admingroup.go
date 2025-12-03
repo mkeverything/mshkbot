@@ -69,25 +69,45 @@ func handleTournament(b *bot.Bot, update tgbotapi.Update) error {
 	return b.SendMessageWithMarkdown(update.Message.Chat.ID, message, true)
 }
 
+func formatPlayerLineForAdmin(num int, player types.Player) string {
+	var playerLine string
+	if player.CheckinMessageID != 0 && player.CheckinChatID != 0 {
+		chatIDForLink := player.CheckinChatID
+		if chatIDForLink < 0 {
+			chatIDForLink = -chatIDForLink - 1000000000000
+		}
+		messageLink := fmt.Sprintf("https://t.me/c/%d/%d", chatIDForLink, player.CheckinMessageID)
+		playerLine = fmt.Sprintf("%d. [%s](%s)", num, player.SavedName, messageLink)
+	} else {
+		playerLine = fmt.Sprintf("%d. %s", num, player.SavedName)
+	}
+
+	if player.Username != "" {
+		playerLine += fmt.Sprintf(" (@%s)", player.Username)
+	}
+
+	if player.PeakRating != nil {
+		var siteURL string
+		switch player.PeakRating.Site {
+		case types.SiteLichess:
+			siteURL = fmt.Sprintf("https://lichess.org/@/%s", player.PeakRating.SiteUsername)
+			playerLine += fmt.Sprintf(" ([%s](%s) %d)", player.PeakRating.Site, siteURL, player.PeakRating.BlitzPeak)
+		case types.SiteChesscom:
+			siteURL = fmt.Sprintf("https://www.chess.com/member/%s", player.PeakRating.SiteUsername)
+			playerLine += fmt.Sprintf(" ([%s](%s) %d)", player.PeakRating.Site, siteURL, player.PeakRating.BlitzPeak)
+		}
+	}
+
+	return playerLine
+}
+
 func buildTournamentMessageForAdmin(b *bot.Bot) string {
 	message := "участники:\n"
 
 	count := 1
 	for _, player := range b.Tournament.List {
 		if player.State == types.StateInTournament {
-			playerLine := fmt.Sprintf("%d. [%s](tg://user?id=%d)", count, player.SavedName, player.ID)
-			if player.PeakRating != nil {
-				var siteURL string
-				switch player.PeakRating.Site {
-				case types.SiteLichess:
-					siteURL = fmt.Sprintf("https://lichess.org/@/%s", player.PeakRating.SiteUsername)
-					playerLine += fmt.Sprintf(" ([%s](%s) %d)", player.PeakRating.Site, siteURL, player.PeakRating.BlitzPeak)
-				case types.SiteChesscom:
-					siteURL = fmt.Sprintf("https://www.chess.com/member/%s", player.PeakRating.SiteUsername)
-					playerLine += fmt.Sprintf(" ([%s](%s) %d)", player.PeakRating.Site, siteURL, player.PeakRating.BlitzPeak)
-				}
-			}
-			message += playerLine + "\n"
+			message += formatPlayerLineForAdmin(count, player) + "\n"
 			count++
 		}
 	}
@@ -106,19 +126,7 @@ func buildTournamentMessageForAdmin(b *bot.Bot) string {
 	if len(queuedPlayers) > 0 {
 		message += "\nочередь:\n"
 		for i, player := range queuedPlayers {
-			playerLine := fmt.Sprintf("%d. [%s](tg://user?id=%d)", i+1, player.SavedName, player.ID)
-			if player.PeakRating != nil {
-				var siteURL string
-				switch player.PeakRating.Site {
-				case types.SiteLichess:
-					siteURL = fmt.Sprintf("https://lichess.org/@/%s", player.PeakRating.SiteUsername)
-					playerLine += fmt.Sprintf(" ([%s](%s) %d)", player.PeakRating.Site, siteURL, player.PeakRating.BlitzPeak)
-				case types.SiteChesscom:
-					siteURL = fmt.Sprintf("https://www.chess.com/member/%s", player.PeakRating.SiteUsername)
-					playerLine += fmt.Sprintf(" ([%s](%s) %d)", player.PeakRating.Site, siteURL, player.PeakRating.BlitzPeak)
-				}
-			}
-			message += playerLine + "\n"
+			message += formatPlayerLineForAdmin(i+1, player) + "\n"
 		}
 	}
 

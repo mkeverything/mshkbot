@@ -140,12 +140,14 @@ func handleCheckIn(b *bot.Bot, update tgbotapi.Update) error {
 	}
 
 	newPlayer := types.Player{
-		ID:         userID,
-		Username:   fullUser.Username,
-		SavedName:  fullUser.SavedName,
-		TimeAdded:  time.Now().UTC(),
-		State:      state,
-		PeakRating: peakRating,
+		ID:               userID,
+		Username:         fullUser.Username,
+		SavedName:        fullUser.SavedName,
+		TimeAdded:        time.Now().UTC(),
+		State:            state,
+		PeakRating:       peakRating,
+		CheckinMessageID: update.Message.MessageID,
+		CheckinChatID:    update.Message.Chat.ID,
 	}
 
 	b.Tournament.AddPlayer(ctx, newPlayer)
