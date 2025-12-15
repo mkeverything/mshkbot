@@ -42,10 +42,10 @@ docker-clean:
 .PHONY: deploy
 deploy: build docker-build docker-push docker-clean
 	ssh root@${DEPLOY_HOST} "\
-		docker pull sukalov/mshkbot:latest; \
+		cd /root && \
+		docker pull sukalov/mshkbot:latest && \
 		docker run --name mshk \
 		--restart always \
-		--env-file ./mshk/.env -v \
-		$(pwd)/root/.env:/root/.env \
+		-v /root/mshk/.env:/root/.env:ro \
 		-d sukalov/mshkbot:latest \
 	"
