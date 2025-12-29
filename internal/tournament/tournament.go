@@ -8,6 +8,7 @@ import (
 
 	"github.com/sukalov/mshkbot/internal/redis"
 	"github.com/sukalov/mshkbot/internal/types"
+	"github.com/sukalov/mshkbot/internal/utils"
 )
 
 type TournamentManager struct {
@@ -52,7 +53,7 @@ func (tm *TournamentManager) AddPlayer(ctx context.Context, player types.Player)
 	defer tm.mu.Unlock()
 	tm.List = append(tm.List, player)
 	if err := redis.SetList(ctx, tm.List); err != nil {
-		fmt.Printf("error happened while adding to redis list: %s", err)
+		utils.LogTournamentError("add_player", int64(player.ID), err)
 		return err
 	}
 	return nil
@@ -72,7 +73,7 @@ func (tm *TournamentManager) CreateTournament(ctx context.Context, limit int, li
 		Exists:              true,
 	}
 	if err := redis.SetMetadata(ctx, tm.Metadata); err != nil {
-		fmt.Printf("error happened while saving metadata to redis: %s", err)
+		utils.LogTournamentError("create_tournament", 0, err)
 		return err
 	}
 	return nil
@@ -93,11 +94,11 @@ func (tm *TournamentManager) RemoveTournament(ctx context.Context) error {
 		Exists:                false,
 	}
 	if err := tm.clearList(ctx); err != nil {
-		fmt.Printf("error happened while clearing the redis list: %s", err)
+		utils.LogTournamentError("clear_list", 0, err)
 		return err
 	}
 	if err := redis.SetMetadata(ctx, tm.Metadata); err != nil {
-		fmt.Printf("error happened while saving metadata to redis: %s", err)
+		utils.LogTournamentError("save_metadata", 0, err)
 		return err
 	}
 	return nil
@@ -113,11 +114,11 @@ func (tm *TournamentManager) removeTournament(ctx context.Context) error {
 		Exists:                false,
 	}
 	if err := tm.clearList(ctx); err != nil {
-		fmt.Printf("error happened while clearing the redis list: %s", err)
+		utils.LogTournamentError("clear_list", 0, err)
 		return err
 	}
 	if err := redis.SetMetadata(ctx, tm.Metadata); err != nil {
-		fmt.Printf("error happened while saving metadata to redis: %s", err)
+		utils.LogTournamentError("save_metadata", 0, err)
 		return err
 	}
 	return nil
@@ -126,7 +127,7 @@ func (tm *TournamentManager) removeTournament(ctx context.Context) error {
 func (tm *TournamentManager) clearList(ctx context.Context) error {
 	tm.List = []types.Player{}
 	if err := redis.SetList(ctx, tm.List); err != nil {
-		fmt.Printf("error happened while clearing the redis list: %s", err)
+		utils.LogTournamentError("clear_list", 0, err)
 	}
 	return nil
 }
@@ -139,7 +140,7 @@ func (tm *TournamentManager) EditPlayer(ctx context.Context, playerID int, updat
 		if player.ID == playerID {
 			tm.List[i] = updatedPlayer
 			if err := redis.SetList(ctx, tm.List); err != nil {
-				fmt.Printf("error happened while updating the redis list: %s", err)
+				utils.LogTournamentError("update_list", 0, err)
 				return err
 			}
 			return nil
@@ -157,7 +158,7 @@ func (tm *TournamentManager) RemovePlayer(ctx context.Context, playerID int) err
 		if player.ID == playerID {
 			tm.List = append(tm.List[:i], tm.List[i+1:]...)
 			if err := redis.SetList(ctx, tm.List); err != nil {
-				fmt.Printf("error happened while updating the redis list: %s", err)
+				utils.LogTournamentError("update_list", 0, err)
 				return err
 			}
 			return nil
@@ -171,11 +172,11 @@ func (tm *TournamentManager) Sync(ctx context.Context) error {
 	tm.mu.RLock()
 	defer tm.mu.RUnlock()
 	if err := redis.SetList(ctx, tm.List); err != nil {
-		fmt.Printf("error happened while updating the redis list: %s", err)
+		utils.LogTournamentError("sync_list", 0, err)
 		return err
 	}
 	if err := redis.SetMetadata(ctx, tm.Metadata); err != nil {
-		fmt.Printf("error happened while updating the redis metadata: %s", err)
+		utils.LogTournamentError("sync_metadata", 0, err)
 		return err
 	}
 	return nil
@@ -206,7 +207,7 @@ func (tm *TournamentManager) SetLimit(ctx context.Context, limit int) error {
 	defer tm.mu.Unlock()
 	tm.Metadata.Limit = limit
 	if err := redis.SetMetadata(ctx, tm.Metadata); err != nil {
-		fmt.Printf("error happened while updating the redis metadata: %s", err)
+		utils.LogTournamentError("update_metadata", 0, err)
 		return err
 	}
 	return nil
@@ -217,7 +218,7 @@ func (tm *TournamentManager) SetLichessRatingLimit(ctx context.Context, ratingLi
 	defer tm.mu.Unlock()
 	tm.Metadata.LichessRatingLimit = ratingLimit
 	if err := redis.SetMetadata(ctx, tm.Metadata); err != nil {
-		fmt.Printf("error happened while updating the redis metadata: %s", err)
+		utils.LogTournamentError("update_metadata", 0, err)
 		return err
 	}
 	return nil
@@ -228,7 +229,7 @@ func (tm *TournamentManager) SetChesscomRatingLimit(ctx context.Context, ratingL
 	defer tm.mu.Unlock()
 	tm.Metadata.ChesscomRatingLimit = ratingLimit
 	if err := redis.SetMetadata(ctx, tm.Metadata); err != nil {
-		fmt.Printf("error happened while updating the redis metadata: %s", err)
+		utils.LogTournamentError("update_metadata", 0, err)
 		return err
 	}
 	return nil
@@ -239,7 +240,7 @@ func (tm *TournamentManager) SetAnnouncementMessageID(ctx context.Context, messa
 	defer tm.mu.Unlock()
 	tm.Metadata.AnnouncementMessageID = messageID
 	if err := redis.SetMetadata(ctx, tm.Metadata); err != nil {
-		fmt.Printf("error happened while updating the redis metadata: %s", err)
+		utils.LogTournamentError("update_metadata", 0, err)
 		return err
 	}
 	return nil

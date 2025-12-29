@@ -10,6 +10,7 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/sukalov/mshkbot/internal/tournament"
+	"github.com/sukalov/mshkbot/internal/utils"
 )
 
 // reactionType represents a reaction type for telegram API
@@ -190,7 +191,9 @@ func (b *Bot) processUpdate(update tgbotapi.Update, handlers HandlerSet) error {
 		command := update.Message.Command()
 		if handler, exists := handlers.Commands[command]; exists {
 			if err := handler(b, update); err != nil {
-				return b.SendMessage(update.Message.From.ID, fmt.Sprintf("ошибка при выполнении команды %s", command))
+				errorContext := utils.CreateErrorContext(&update, "command_execution")
+				utils.LogError(errorContext, err, "command execution failed")
+				return b.SendMessage(update.Message.From.ID, utils.FormatCommandError(command, errorContext.TraceID))
 			}
 			return nil
 		}
@@ -211,7 +214,9 @@ func (b *Bot) processUpdate(update tgbotapi.Update, handlers HandlerSet) error {
 
 		if handler, exists := handlers.Callbacks[query]; exists {
 			if err := handler(b, update); err != nil {
-				return b.SendMessage(update.Message.From.ID, "ошибка")
+				errorContext := utils.CreateErrorContext(&update, "callback_execution")
+				utils.LogError(errorContext, err, "callback execution failed")
+				return b.SendMessage(update.Message.From.ID, utils.FormatUserErrorMessage(errorContext.TraceID, "ошибка"))
 			}
 			return nil
 		}

@@ -40,7 +40,9 @@ func handleCheckIn(b *bot.Bot, update tgbotapi.Update) error {
 		if err.Error() == "user not found" {
 			return b.ReplyToMessage(update.Message.Chat.ID, update.Message.MessageID, "напишите мне в личку чтобы зарегистрироваться")
 		}
-		return b.SendMessage(update.Message.From.ID, fmt.Sprintf("ошибка: %v. попробуйте ещё раз и если ничего не получается, напишите @sukalov", err))
+		errorContext := utils.CreateErrorContext(&update, "get_user_for_checkin")
+		utils.LogError(errorContext, err, "failed to get user for checkin")
+		return b.SendMessage(update.Message.From.ID, utils.FormatUserErrorMessage(errorContext.TraceID, "ошибка при получении данных пользователя"))
 	}
 	if user.State != db.StateCompleted {
 		return b.ReplyToMessage(update.Message.Chat.ID, update.Message.MessageID, "мы с вами в личке ещё не закончили регистрацию")
@@ -64,8 +66,9 @@ func handleCheckIn(b *bot.Bot, update tgbotapi.Update) error {
 
 	fullUser, err := db.GetByChatID(update.Message.From.ID)
 	if err != nil {
-		log.Printf("failed to get full user data: %v", err)
-		return b.ReplyToMessage(update.Message.Chat.ID, update.Message.MessageID, "ошибка при получении данных пользователя")
+		errorContext := utils.CreateErrorContext(&update, "get_user_for_checkin_complete")
+		utils.LogError(errorContext, err, "failed to get full user data")
+		return b.ReplyToMessage(update.Message.Chat.ID, update.Message.MessageID, utils.FormatUserErrorMessage(errorContext.TraceID, "ошибка при получении данных пользователя"))
 	}
 
 	if existingPlayer != nil {
@@ -199,8 +202,9 @@ func handleCheckOut(b *bot.Bot, update tgbotapi.Update) error {
 	updatedPlayer.CheckedOutTime = time.Now().UTC()
 
 	if err := b.Tournament.EditPlayer(ctx, userID, updatedPlayer); err != nil {
-		log.Printf("failed to check out player: %v", err)
-		return b.ReplyToMessage(update.Message.Chat.ID, update.Message.MessageID, "ошибка при отписке")
+		errorContext := utils.CreateErrorContext(&update, "checkout_player")
+		utils.LogError(errorContext, err, "failed to check out player")
+		return b.ReplyToMessage(update.Message.Chat.ID, update.Message.MessageID, utils.FormatUserErrorMessage(errorContext.TraceID, "ошибка при отписке"))
 	}
 
 	log.Printf("user %d checked out from tournament", userID)

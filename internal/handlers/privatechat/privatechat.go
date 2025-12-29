@@ -286,14 +286,17 @@ func handlePrivateMessage(b *bot.Bot, update tgbotapi.Update) error {
 
 		allTimeHigh, err := utils.GetLichessAllTimeHigh(username)
 		if err != nil {
-			return b.SendMessage(chatID, "произошла ошибка, попробуйте ещё раз")
+			errorContext := utils.CreateErrorContext(&update, "get_lichess_rating")
+			utils.LogError(errorContext, err, "failed to get lichess all time high")
+			return b.SendMessage(chatID, utils.FormatUserErrorMessage(errorContext.TraceID, "произошла ошибка, попробуйте ещё раз"))
 		}
 		log.Printf("all time high: %d", allTimeHigh)
 
 		// save the username
 		if err := db.UpdateLichess(chatID, username); err != nil { // DB CALL 2
-			log.Printf("failed to update lichess username: %v", err)
-			return b.SendMessage(chatID, fmt.Sprintf("произошла ошибка, попробуйте ещё раз: %v", err))
+			errorContext := utils.CreateErrorContext(&update, "update_lichess_username")
+			utils.LogError(errorContext, err, "failed to update lichess username")
+			return b.SendMessage(chatID, utils.FormatUserErrorMessage(errorContext.TraceID, "произошла ошибка, попробуйте ещё раз"))
 		}
 
 		// ask for saved name
@@ -311,8 +314,9 @@ func handlePrivateMessage(b *bot.Bot, update tgbotapi.Update) error {
 
 		// save the username
 		if err := db.UpdateChessCom(chatID, username); err != nil {
-			log.Printf("failed to update lichess username: %v", err)
-			return b.SendMessage(chatID, "произошла ошибка, попробуйте еще раз")
+			errorContext := utils.CreateErrorContext(&update, "update_chesscom_username")
+			utils.LogError(errorContext, err, "failed to update chesscom username")
+			return b.SendMessage(chatID, utils.FormatUserErrorMessage(errorContext.TraceID, "произошла ошибка, попробуйте еще раз"))
 		}
 
 		// ask for saved name
@@ -330,8 +334,9 @@ func handlePrivateMessage(b *bot.Bot, update tgbotapi.Update) error {
 		}
 
 		if err := db.UpdateSavedName(chatID, savedName); err != nil {
-			log.Printf("failed to update saved name: %v", err)
-			return b.SendMessage(chatID, "произошла ошибка, попробуйте еще раз")
+			errorContext := utils.CreateErrorContext(&update, "update_saved_name")
+			utils.LogError(errorContext, err, "failed to update saved name")
+			return b.SendMessage(chatID, utils.FormatUserErrorMessage(errorContext.TraceID, "произошла ошибка, попробуйте еще раз"))
 		}
 
 		if err := db.UpdateState(chatID, db.StateCompleted); err != nil {
@@ -348,8 +353,9 @@ func handlePrivateMessage(b *bot.Bot, update tgbotapi.Update) error {
 		}
 
 		if err := db.UpdateSavedName(chatID, newName); err != nil {
-			log.Printf("failed to update saved name: %v", err)
-			return b.SendMessage(chatID, "произошла ошибка, попробуйте еще раз")
+			errorContext := utils.CreateErrorContext(&update, "update_saved_name_command")
+			utils.LogError(errorContext, err, "failed to update saved name via command")
+			return b.SendMessage(chatID, utils.FormatUserErrorMessage(errorContext.TraceID, "произошла ошибка, попробуйте еще раз"))
 		}
 
 		if err := db.UpdateState(chatID, db.StateCompleted); err != nil {
@@ -379,14 +385,17 @@ func handlePrivateMessage(b *bot.Bot, update tgbotapi.Update) error {
 
 		fullUser, err := db.GetByChatID(chatID)
 		if err != nil {
-			return b.SendMessage(chatID, "произошла ошибка, попробуйте ещё раз")
+			errorContext := utils.CreateErrorContext(&update, "get_user_for_lichess_update")
+			utils.LogError(errorContext, err, "failed to get user for lichess update")
+			return b.SendMessage(chatID, utils.FormatUserErrorMessage(errorContext.TraceID, "произошла ошибка, попробуйте ещё раз"))
 		}
 
 		previousUsername := fullUser.Lichess
 
 		if err := db.UpdateLichessAndState(chatID, newUsername, db.StateCompleted); err != nil {
-			log.Printf("failed to update lichess username: %v", err)
-			return b.SendMessage(chatID, "произошла ошибка, попробуйте ещё раз")
+			errorContext := utils.CreateErrorContext(&update, "update_lichess_and_state")
+			utils.LogError(errorContext, err, "failed to update lichess username and state")
+			return b.SendMessage(chatID, utils.FormatUserErrorMessage(errorContext.TraceID, "произошла ошибка, попробуйте ещё раз"))
 		}
 
 		if previousUsername != nil && *previousUsername != "" {
@@ -408,14 +417,17 @@ func handlePrivateMessage(b *bot.Bot, update tgbotapi.Update) error {
 
 		fullUser, err := db.GetByChatID(chatID)
 		if err != nil {
-			return b.SendMessage(chatID, "произошла ошибка, попробуйте ещё раз")
+			errorContext := utils.CreateErrorContext(&update, "get_user_for_chesscom_update")
+			utils.LogError(errorContext, err, "failed to get user for chesscom update")
+			return b.SendMessage(chatID, utils.FormatUserErrorMessage(errorContext.TraceID, "произошла ошибка, попробуйте ещё раз"))
 		}
 
 		previousUsername := fullUser.ChessCom
 
 		if err := db.UpdateChessComAndState(chatID, newUsername, db.StateCompleted); err != nil {
-			log.Printf("failed to update chesscom username: %v", err)
-			return b.SendMessage(chatID, "произошла ошибка, попробуйте ещё раз")
+			errorContext := utils.CreateErrorContext(&update, "update_chesscom_and_state")
+			utils.LogError(errorContext, err, "failed to update chesscom username and state")
+			return b.SendMessage(chatID, utils.FormatUserErrorMessage(errorContext.TraceID, "произошла ошибка, попробуйте ещё раз"))
 		}
 
 		if previousUsername != nil && *previousUsername != "" {

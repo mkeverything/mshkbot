@@ -70,7 +70,7 @@ func init() {
 
 		log.Println("database connected and schema migrated successfully")
 	})
-	
+
 }
 
 // closes the database connection safely
