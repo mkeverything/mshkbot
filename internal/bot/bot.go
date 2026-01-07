@@ -514,3 +514,7 @@ func (b *Bot) GetAdminProcess(adminChatID int64) (*AdminProcess, bool) {
 func (b *Bot) ClearAdminProcess(adminChatID int64) {
 	b.adminProcesses.Clear(adminChatID)
 }
+
+func (b *Bot) SetAdminProcessWithConfig(adminID int64, processType AdminProcessType, step string, config *EventConfig) {
+	b.adminProcesses.SetWithConfig(adminID, processType, step, config)
+}
