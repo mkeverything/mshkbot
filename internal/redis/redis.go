@@ -14,6 +14,23 @@ var Client *redisClient.Client
 
 type RedisClient *redisClient.Client
 
+// ValidateConnection checks if redis connection is healthy
+func ValidateConnection() error {
+	if Client == nil {
+		return fmt.Errorf("redis client is nil")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	_, err := Client.Ping(ctx).Result()
+	if err != nil {
+		return fmt.Errorf("redis connection failed: %w", err)
+	}
+
+	return nil
+}
+
 func init() {
 	env, err := utils.LoadEnv([]string{"REDIS_URL", "REDIS_PASSWORD"})
 	if err != nil {

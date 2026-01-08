@@ -28,23 +28,83 @@ func (tm *TournamentManager) Init() error {
 	fmt.Println("initializing tournament")
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
+
 	list, err := redis.GetList(ctx)
 	if err != nil {
-		return err
+		fmt.Printf("failed to get tournament list from redis: %v\n", err)
+		list = []types.Player{}
+		if err := redis.SetList(ctx, list); err != nil {
+			return fmt.Errorf("failed to reset empty list after redis error: %w", err)
+		}
+		fmt.Println("recovered from redis list error by creating empty list")
 	}
+
 	metadata, err := redis.GetMetadata(ctx)
 	if err != nil {
-		return err
+		fmt.Printf("failed to get tournament metadata from redis: %v\n", err)
+		emptyMetadata := types.TournamentMetadata{}
+		if err := redis.SetMetadata(ctx, emptyMetadata); err != nil {
+			return fmt.Errorf("failed to reset empty metadata after redis error: %w", err)
+		}
+		fmt.Println("recovered from redis metadata error by creating empty metadata")
+		tm.Metadata = emptyMetadata
+	} else {
+		tm.Metadata = metadata
 	}
+
 	tm.List = list
-	tm.Metadata = metadata
+
 	if !tm.Metadata.Exists && len(tm.List) > 0 {
 		fmt.Println("tournament does not exist but list is not empty, clearing list")
 		if err := tm.removeTournament(ctx); err != nil {
-			return err
+			return fmt.Errorf("failed to clear inconsistent tournament state: %w", err)
 		}
 	}
+
+	if err := tm.validateDataConsistency(ctx); err != nil {
+		fmt.Printf("data inconsistency detected and fixed: %v\n", err)
+	}
+
 	fmt.Println("tournament initialized")
+	return nil
+}
+
+func (tm *TournamentManager) validateDataConsistency(ctx context.Context) error {
+	if tm.Metadata.Exists {
+		validPlayers := []types.Player{}
+		for _, player := range tm.List {
+			if player.ID <= 0 {
+				fmt.Printf("removing invalid player with ID %d\n", player.ID)
+				continue
+			}
+			if player.SavedName == "" {
+				fmt.Printf("removing player %d with empty saved name\n", player.ID)
+				continue
+			}
+			if player.State != types.StateInTournament && player.State != types.StateQueued && player.State != types.StateCheckedOut {
+				fmt.Printf("fixing invalid state '%s' for player %d to 'queued'\n", player.State, player.ID)
+				player.State = types.StateQueued
+			}
+			validPlayers = append(validPlayers, player)
+		}
+
+		if len(validPlayers) != len(tm.List) {
+			tm.List = validPlayers
+			if err := redis.SetList(ctx, tm.List); err != nil {
+				return fmt.Errorf("failed to save corrected player list: %w", err)
+			}
+			fmt.Printf("corrected player list from %d to %d valid players\n", len(tm.List), len(validPlayers))
+		}
+
+		if tm.Metadata.Limit <= 0 {
+			fmt.Printf("fixing invalid tournament limit %d to 100\n", tm.Metadata.Limit)
+			tm.Metadata.Limit = 100
+			if err := redis.SetMetadata(ctx, tm.Metadata); err != nil {
+				return fmt.Errorf("failed to save corrected metadata: %w", err)
+			}
+		}
+	}
+
 	return nil
 }
 
