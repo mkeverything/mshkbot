@@ -126,8 +126,10 @@ func handleRegister(b *bot.Bot, update tgbotapi.Update) error {
 	return nil
 }
 
+const helpMessage = "/help — показать это сообщение\n\n/me — показать вашу информацию\n\n/myratings — показать пиковые рейтинги\n\n/change_nickname — изменить никнейм для турниров\n\n/change_platform — изменить или добавить аккаунт lichess/chess.com"
+
 func handleHelp(b *bot.Bot, update tgbotapi.Update) error {
-	return b.SendMessage(update.Message.Chat.ID, "/help — показать это сообщение\n\n/me — показать вашу информацию\n\n/myratings — показать пиковые рейтинги\n\n/change_nickname — изменить никнейм для турниров\n\n/change_platform — изменить или добавить аккаунт lichess/chess.com")
+	return b.SendMessage(update.Message.Chat.ID, helpMessage)
 }
 
 func handleMe(b *bot.Bot, update tgbotapi.Update) error {
@@ -439,9 +441,10 @@ func handlePrivateMessage(b *bot.Bot, update tgbotapi.Update) error {
 	default:
 		log.Printf("private message from %d: %s", update.Message.From.ID, update.Message.Text)
 		forwardUnparsableMessage(b, update)
-	}
 
-	return nil
+		feedback := fmt.Sprintf("непонятно. вот всё что я умею:\n\n%s", helpMessage)
+		return b.SendMessage(chatID, feedback)
+	}
 }
 
 func forwardUnparsableMessage(b *bot.Bot, update tgbotapi.Update) {
