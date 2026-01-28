@@ -33,6 +33,7 @@ func GetHandlers(s *cron.Scheduler) bot.HandlerSet {
 			"ban_player":           handleBanPlayer,
 			"unban_player":         handleUnbanPlayer,
 			"admit_to_green":       handleAdmitToGreen,
+			"allow_to_green":       handleAllowToGreen,
 			"test_transliteration": handleTestTransliteration,
 			"transliterate_all":    handleTransliterateAll,
 			"send_schedule":        handleSendSchedule,
@@ -55,7 +56,7 @@ func GetHandlers(s *cron.Scheduler) bot.HandlerSet {
 }
 
 func handleHelp(b *bot.Bot, update tgbotapi.Update) error {
-	return b.SendMessage(update.Message.Chat.ID, "команды администратора:\n\n/tournament - показать состояние турнира\n\n/start_custom - создать кастомный турнир с настройками\n\n/stop_tournament - остановить текущий турнир\n\n/create_event - создать событие для использования в будущем\n\n/send_schedule - показать расписание на неделю\n\n/suspend_from_green - отстранить пользователя от зелёных турниров\n\n/admit_to_green - допустить пользователя к зелёным турнирам\n\n/ban_player - забанить пользователя\n\n/unban_player - разбанить пользователя")
+	return b.SendMessage(update.Message.Chat.ID, "команды администратора:\n\n/tournament - показать состояние турнира\n\n/start_custom - создать кастомный турнир с настройками\n\n/stop_tournament - остановить текущий турнир\n\n/create_event - создать событие для использования в будущем\n\n/send_schedule - показать расписание на неделю\n\n/suspend_from_green - отстранить пользователя от зелёных турниров\n\n/admit_to_green - допустить пользователя к зелёным турнирам\n\n/allow_to_green - разрешить пользователю участие в зелёном турнире вручную\n\n/ban_player - забанить пользователя\n\n/unban_player - разбанить пользователя")
 }
 
 func handleTournamentJSON(b *bot.Bot, update tgbotapi.Update) error {
@@ -149,6 +150,19 @@ func formatPlayerLineForAdmin(num int, player types.Player) (string, error) {
 	return playerLine, nil
 }
 
+func formatPlayerLineForAdminWithMetadata(num int, player types.Player, metadata types.TournamentMetadata) (string, error) {
+	playerLine, err := formatPlayerLineForAdmin(num, player)
+	if err != nil {
+		return "", err
+	}
+
+	if player.AllowToGreen {
+		playerLine += " 🍀"
+	}
+
+	return playerLine, nil
+}
+
 func buildTournamentMessageForAdmin(b *bot.Bot) (string, error) {
 	if b.Tournament == nil {
 		return "", fmt.Errorf("tournament manager is nil")
@@ -163,7 +177,7 @@ func buildTournamentMessageForAdmin(b *bot.Bot) (string, error) {
 	count := 1
 	for _, player := range b.Tournament.List {
 		if player.State == types.StateInTournament {
-			playerLine, err := formatPlayerLineForAdmin(count, player)
+			playerLine, err := formatPlayerLineForAdminWithMetadata(count, player, b.Tournament.Metadata)
 			if err != nil {
 				log.Printf("failed to format player line for admin: %v", err)
 				continue
@@ -187,7 +201,7 @@ func buildTournamentMessageForAdmin(b *bot.Bot) (string, error) {
 	if len(queuedPlayers) > 0 {
 		message += "\nочередь:\n"
 		for i, player := range queuedPlayers {
-			playerLine, err := formatPlayerLineForAdmin(i+1, player)
+			playerLine, err := formatPlayerLineForAdminWithMetadata(i+1, player, b.Tournament.Metadata)
 			if err != nil {
 				log.Printf("failed to format queued player line for admin: %v", err)
 				continue
@@ -690,6 +704,16 @@ func handleAdminMessage(b *bot.Bot, update tgbotapi.Update) error {
 		b.ClearAdminProcess(adminChatID)
 
 		return b.SendMessage(update.Message.Chat.ID, fmt.Sprintf("пользователь %s допущен к зелёным турнирам", username))
+
+	case bot.ProcessTypeAllowToGreen:
+		if err := db.SetAllowToGreen(user.ChatID, true); err != nil {
+			b.ClearAdminProcess(adminChatID)
+			return b.SendMessage(update.Message.Chat.ID, fmt.Sprintf("ошибка при обновлении статуса: %v", err))
+		}
+
+		b.ClearAdminProcess(adminChatID)
+
+		return b.SendMessage(update.Message.Chat.ID, fmt.Sprintf("пользователю %s разрешено участие в зелёных турнирах вручную", username))
 	}
 
 	return nil
@@ -797,6 +821,12 @@ func handleUnbanPlayer(b *bot.Bot, update tgbotapi.Update) error {
 	adminChatID := update.Message.From.ID
 	b.SetAdminProcess(adminChatID, bot.ProcessTypeUnban, "")
 	return b.SendMessage(update.Message.Chat.ID, "введите telegram username пользователя для разбана:")
+}
+
+func handleAllowToGreen(b *bot.Bot, update tgbotapi.Update) error {
+	adminChatID := update.Message.From.ID
+	b.SetAdminProcess(adminChatID, bot.ProcessTypeAllowToGreen, "")
+	return b.SendMessage(update.Message.Chat.ID, "введите telegram username пользователя для разрешения участия в зелёных турнирах:")
 }
 
 func handleAdmitToGreen(b *bot.Bot, update tgbotapi.Update) error {

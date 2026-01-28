@@ -207,6 +207,26 @@ func SetNotGreenUntil(chatID int64, until *time.Time) error {
 	return nil
 }
 
+func SetAllowToGreen(chatID int64, allow bool) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	result := Database.WithContext(ctx).
+		Model(&User{}).
+		Where("chat_id = ?", chatID).
+		Update("allow_to_green", allow)
+
+	if result.Error != nil {
+		return fmt.Errorf("failed to update manual allow status: %w", result.Error)
+	}
+
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("no user found with chat id: %d", chatID)
+	}
+
+	return nil
+}
+
 func IncrementTimesPlayed(chatID int64) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

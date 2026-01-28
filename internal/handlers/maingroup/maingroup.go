@@ -89,6 +89,7 @@ func handleCheckIn(b *bot.Bot, update tgbotapi.Update) error {
 	}
 
 	var peakRating *types.PeakRating
+	manualAllowUsed := false
 
 	if fullUser.Lichess != nil {
 		lichessPeakRatings, err := utils.GetLichessAllTimeHigh(*fullUser.Lichess)
@@ -100,7 +101,11 @@ func handleCheckIn(b *bot.Bot, update tgbotapi.Update) error {
 				if lichessPeakRatings.Blitz >= lichessRatingLimit ||
 					lichessPeakRatings.Rapid >= lichessRatingLimit ||
 					lichessPeakRatings.Classical >= lichessRatingLimit {
-					return b.ReplyToMessage(update.Message.Chat.ID, update.Message.MessageID, "ваш пиковый рейтинг на личесе превышает лимит турнира")
+					if fullUser.AllowToGreen {
+						manualAllowUsed = true
+					} else {
+						return b.ReplyToMessage(update.Message.Chat.ID, update.Message.MessageID, "ваш пиковый рейтинг на личесе превышает лимит турнира")
+					}
 				}
 			}
 			peakRating = &types.PeakRating{
@@ -121,7 +126,11 @@ func handleCheckIn(b *bot.Bot, update tgbotapi.Update) error {
 				if chesscomPeakRatings.Blitz >= chesscomRatingLimit ||
 					chesscomPeakRatings.Rapid >= chesscomRatingLimit ||
 					chesscomPeakRatings.Classical >= chesscomRatingLimit {
-					return b.ReplyToMessage(update.Message.Chat.ID, update.Message.MessageID, "ваш пиковый рейтинг на чесскоме превышает лимит турнира")
+					if fullUser.AllowToGreen {
+						manualAllowUsed = true
+					} else {
+						return b.ReplyToMessage(update.Message.Chat.ID, update.Message.MessageID, "ваш пиковый рейтинг на чесскоме превышает лимит турнира")
+					}
 				}
 			}
 			peakRating = &types.PeakRating{
@@ -151,6 +160,7 @@ func handleCheckIn(b *bot.Bot, update tgbotapi.Update) error {
 		PeakRating:       peakRating,
 		CheckinMessageID: update.Message.MessageID,
 		CheckinChatID:    update.Message.Chat.ID,
+		AllowToGreen:     manualAllowUsed,
 	}
 
 	b.Tournament.AddPlayer(ctx, newPlayer)

@@ -20,6 +20,7 @@ type Player struct {
 	PeakRating       *PeakRating `json:"peak_rating,omitempty"`
 	CheckinMessageID int         `json:"checkin_message_id,omitempty"`
 	CheckinChatID    int64       `json:"checkin_chat_id,omitempty"`
+	AllowToGreen     bool        `json:"allow_to_green,omitempty"`
 }
 
 const (
