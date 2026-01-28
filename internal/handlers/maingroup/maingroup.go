@@ -170,7 +170,7 @@ func handleCheckIn(b *bot.Bot, update tgbotapi.Update) error {
 		log.Printf("failed to increment times played for user %d: %v", userID, err)
 	}
 
-	if err := updateAnnouncementMessage(b, update.Message.Chat.ID); err != nil {
+	if err := UpdateAnnouncementMessage(b, update.Message.Chat.ID); err != nil {
 		log.Printf("failed to update announcement message: %v", err)
 	}
 
@@ -224,12 +224,12 @@ func handleCheckOut(b *bot.Bot, update tgbotapi.Update) error {
 	}
 
 	if wasInTournament {
-		if err := promoteQueuedPlayer(b, ctx); err != nil {
+		if err := PromoteQueuedPlayer(b, ctx); err != nil {
 			log.Printf("failed to promote queued player: %v", err)
 		}
 	}
 
-	if err := updateAnnouncementMessage(b, update.Message.Chat.ID); err != nil {
+	if err := UpdateAnnouncementMessage(b, update.Message.Chat.ID); err != nil {
 		log.Printf("failed to update announcement message: %v", err)
 	}
 
@@ -283,7 +283,7 @@ func schedulePlayerCleanup(b *bot.Bot, playerID int, delay time.Duration) {
 	}
 }
 
-func updateAnnouncementMessage(b *bot.Bot, chatID int64) error {
+func UpdateAnnouncementMessage(b *bot.Bot, chatID int64) error {
 	announcementMessageID := b.Tournament.Metadata.AnnouncementMessageID
 	if announcementMessageID == 0 {
 		return nil
@@ -294,12 +294,12 @@ func updateAnnouncementMessage(b *bot.Bot, chatID int64) error {
 		messageIntro = "ТУРНИР НАЧАЛСЯ!!!"
 	}
 
-	message := buildTournamentListMessage(b, messageIntro)
+	message := BuildTournamentListMessage(b, messageIntro)
 
 	return b.EditMessage(chatID, announcementMessageID, message)
 }
 
-func promoteQueuedPlayer(b *bot.Bot, ctx context.Context) error {
+func PromoteQueuedPlayer(b *bot.Bot, ctx context.Context) error {
 	var firstQueuedPlayer *types.Player
 
 	for _, player := range b.Tournament.List {
@@ -324,7 +324,7 @@ func promoteQueuedPlayer(b *bot.Bot, ctx context.Context) error {
 	return nil
 }
 
-func buildTournamentListMessage(b *bot.Bot, messageIntro string) string {
+func BuildTournamentListMessage(b *bot.Bot, messageIntro string) string {
 	message := fmt.Sprintf("%s\n\nучастники:\n", messageIntro)
 
 	count := 1

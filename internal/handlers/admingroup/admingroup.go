@@ -12,6 +12,7 @@ import (
 	"github.com/sukalov/mshkbot/internal/bot"
 	"github.com/sukalov/mshkbot/internal/cron"
 	"github.com/sukalov/mshkbot/internal/db"
+	"github.com/sukalov/mshkbot/internal/handlers/maingroup"
 	"github.com/sukalov/mshkbot/internal/types"
 	"github.com/sukalov/mshkbot/internal/utils"
 )
@@ -34,6 +35,7 @@ func GetHandlers(s *cron.Scheduler) bot.HandlerSet {
 			"unban_player":         handleUnbanPlayer,
 			"admit_to_green":       handleAdmitToGreen,
 			"allow_to_green":       handleAllowToGreen,
+			"force_checkout":       handleForceCheckout,
 			"test_transliteration": handleTestTransliteration,
 			"transliterate_all":    handleTransliterateAll,
 			"send_schedule":        handleSendSchedule,
@@ -51,12 +53,13 @@ func GetHandlers(s *cron.Scheduler) bot.HandlerSet {
 			"create_event_param": handleCreateEventParam,
 			"start_custom_param": handleStartCustomParam,
 			"stop_tournament":    handleStopTournamentCallback,
+			"force_checkout":     handleForceCheckoutCallback,
 		},
 	}
 }
 
 func handleHelp(b *bot.Bot, update tgbotapi.Update) error {
-	return b.SendMessage(update.Message.Chat.ID, "команды администратора:\n\n/tournament - показать состояние турнира\n\n/start_custom - создать кастомный турнир с настройками\n\n/stop_tournament - остановить текущий турнир\n\n/create_event - создать событие для использования в будущем\n\n/send_schedule - показать расписание на неделю\n\n/suspend_from_green - отстранить пользователя от зелёных турниров\n\n/admit_to_green - допустить пользователя к зелёным турнирам\n\n/allow_to_green - разрешить пользователю участие в зелёном турнире вручную\n\n/ban_player - забанить пользователя\n\n/unban_player - разбанить пользователя")
+	return b.SendMessage(update.Message.Chat.ID, "команды администратора:\n\n/tournament - показать состояние турнира\n\n/start_custom - создать кастомный турнир с настройками\n\n/stop_tournament - остановить текущий турнир\n\n/create_event - создать событие для использования в будущем\n\n/send_schedule - показать расписание на неделю\n\n/suspend_from_green - отстранить пользователя от зелёных турниров\n\n/admit_to_green - допустить пользователя к зелёным турнирам\n\n/allow_to_green - разрешить пользователю участие в зелёном турнире вручную\n\n/force_checkout - принудительно выписать пользователя из турнира\n\n/ban_player - забанить пользователя\n\n/unban_player - разбанить пользователя")
 }
 
 func handleTournamentJSON(b *bot.Bot, update tgbotapi.Update) error {
@@ -1099,4 +1102,90 @@ func handleScheduleFieldInput(b *bot.Bot, update tgbotapi.Update) error {
 	}
 
 	return b.GiveReaction(update.Message.Chat.ID, update.Message.MessageID, utils.ApproveEmoji())
+}
+
+func handleForceCheckout(b *bot.Bot, update tgbotapi.Update) error {
+	if !b.Tournament.Metadata.Exists {
+		return b.SendMessage(update.Message.Chat.ID, "запись сейчас не идёт")
+	}
+
+	activePlayers := []types.Player{}
+	for _, p := range b.Tournament.List {
+		if p.State == types.StateInTournament || p.State == types.StateQueued {
+			activePlayers = append(activePlayers, p)
+		}
+	}
+
+	if len(activePlayers) == 0 {
+		return b.SendMessage(update.Message.Chat.ID, "в турнире пока никого нет")
+	}
+
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for _, p := range activePlayers {
+		btn := tgbotapi.NewInlineKeyboardButtonData(p.SavedName, fmt.Sprintf("force_checkout:%d", p.ID))
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(btn))
+	}
+
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(rows...)
+	msg := tgbotapi.NewMessage(update.Message.Chat.ID, "выберите игрока для удаления из турнира:")
+	msg.ReplyMarkup = keyboard
+
+	_, err := b.Client.Send(msg)
+	return err
+}
+
+func handleForceCheckoutCallback(b *bot.Bot, update tgbotapi.Update) error {
+	callback := tgbotapi.NewCallback(update.CallbackQuery.ID, "")
+	if _, err := b.Request(callback); err != nil {
+		log.Printf("failed to answer callback: %v", err)
+	}
+
+	data := update.CallbackQuery.Data
+	parts := strings.Split(data, ":")
+	if len(parts) < 2 {
+		return fmt.Errorf("invalid callback data: %s", data)
+	}
+
+	playerID, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return fmt.Errorf("invalid player id: %s", parts[1])
+	}
+
+	ctx := context.Background()
+	var player *types.Player
+	for _, p := range b.Tournament.List {
+		if p.ID == playerID {
+			player = &p
+			break
+		}
+	}
+
+	if player == nil || (player.State != types.StateInTournament && player.State != types.StateQueued) {
+		return b.EditMessage(update.CallbackQuery.Message.Chat.ID, update.CallbackQuery.Message.MessageID, "игрок уже не в турнире")
+	}
+
+	wasInTournament := player.State == types.StateInTournament
+	updatedPlayer := *player
+	updatedPlayer.State = types.StateCheckedOut
+	updatedPlayer.CheckedOutTime = time.Now().UTC()
+
+	if err := b.Tournament.EditPlayer(ctx, playerID, updatedPlayer); err != nil {
+		return b.EditMessage(update.CallbackQuery.Message.Chat.ID, update.CallbackQuery.Message.MessageID, fmt.Sprintf("ошибка при удалении игрока: %v", err))
+	}
+
+	if err := db.DecrementTimesPlayed(int64(playerID)); err != nil {
+		log.Printf("failed to decrement times played for user %d: %v", playerID, err)
+	}
+
+	if wasInTournament {
+		if err := maingroup.PromoteQueuedPlayer(b, ctx); err != nil {
+			log.Printf("failed to promote queued player: %v", err)
+		}
+	}
+
+	if err := maingroup.UpdateAnnouncementMessage(b, b.GetMainGroupID()); err != nil {
+		log.Printf("failed to update announcement message: %v", err)
+	}
+
+	return b.EditMessage(update.CallbackQuery.Message.Chat.ID, update.CallbackQuery.Message.MessageID, fmt.Sprintf("✅ игрок %s удалён из турнира", player.SavedName))
 }
