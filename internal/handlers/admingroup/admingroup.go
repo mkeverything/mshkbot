@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -605,6 +606,74 @@ func handleStartCustomParam(b *bot.Bot, update tgbotapi.Update) error {
 	return nil
 }
 
+// PrivacyHiddenMessage indicates that privacy settings hide the user ID
+const PrivacyHiddenMessage = `этот человек выставил максимальные настройки приватности и его невозможно определить автоматически, так что вам придётся сделать следующее:
+
+1. открываем web.telegram.org
+2. логинимся
+3. открываем чат с этим игроком
+4. копируем ссылку и присылаем сюда
+
+p.s. если у него указан юзернейм всё ещё можно прислать его`
+
+var webTelegramRegex = regexp.MustCompile(`web\.telegram\.org/(?:k|a)/#(-?\d+)`)
+
+func resolveUserFromInput(b *bot.Bot, update tgbotapi.Update) (*db.User, error) {
+	text := strings.TrimSpace(update.Message.Text)
+
+	// 1. Try Web Telegram URL
+	if strings.Contains(text, "web.telegram.org") {
+		matches := webTelegramRegex.FindStringSubmatch(text)
+		if len(matches) > 1 {
+			chatIDStr := matches[1]
+			chatID, err := strconv.ParseInt(chatIDStr, 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("invalid chat id in url: %v", err)
+			}
+			user, err := db.GetByChatID(chatID)
+			if err != nil {
+				return nil, fmt.Errorf("user with id %d not found in db", chatID)
+			}
+			return &user, nil
+		}
+	}
+
+	// 2. Try Username
+	if text != "" && !strings.Contains(text, "web.telegram.org") {
+		username := strings.TrimPrefix(text, "@")
+		// Simple validation to distinguish from other text if needed, but for now assume any text not URL is username attempt
+		// unless it's a forward
+		if update.Message.ForwardFrom == nil && update.Message.ForwardDate == 0 {
+			user, err := db.GetByUsername(username)
+			if err == nil {
+				return &user, nil
+			}
+		}
+	}
+
+	// 3. Try Forwarded Message
+	if update.Message.ForwardFrom != nil {
+		user, err := db.GetByChatID(update.Message.ForwardFrom.ID)
+		if err != nil {
+			return nil, fmt.Errorf("user %d not found in db. they must be registered first", update.Message.ForwardFrom.ID)
+		}
+		return &user, nil
+	}
+
+	// 4. Check for hidden forward
+	if update.Message.ForwardDate != 0 && update.Message.ForwardFrom == nil {
+		return nil, fmt.Errorf("privacy_hidden")
+	}
+
+	// Fallback: if text was provided but didn't match username above, return specific error
+	if text != "" {
+		// We already tried matching username. If we are here, it failed.
+		return nil, fmt.Errorf("пользователь с юзернеймом %s не найден", strings.TrimPrefix(text, "@"))
+	}
+
+	return nil, fmt.Errorf("unknown input")
+}
+
 func handleAdminMessage(b *bot.Bot, update tgbotapi.Update) error {
 	if update.Message == nil {
 		return nil
@@ -618,16 +687,19 @@ func handleAdminMessage(b *bot.Bot, update tgbotapi.Update) error {
 		return nil
 	}
 
-	username := strings.TrimPrefix(strings.TrimSpace(update.Message.Text), "@")
-	if username == "" {
-		b.ClearAdminProcess(adminChatID)
-		return b.SendMessage(update.Message.Chat.ID, "юзернейм не может быть пустым")
+	user, err := resolveUserFromInput(b, update)
+	if err != nil {
+		if err.Error() == "privacy_hidden" {
+			return b.SendMessage(update.Message.Chat.ID, PrivacyHiddenMessage)
+		}
+		// Don't clear process on input error to allow retry
+		return b.SendMessage(update.Message.Chat.ID, fmt.Sprintf("ошибка: %v", err))
 	}
 
-	user, err := db.GetByUsername(username)
-	if err != nil {
-		b.ClearAdminProcess(adminChatID)
-		return b.SendMessage(update.Message.Chat.ID, fmt.Sprintf("пользователь с юзернеймом %s не найден", username))
+	// User found, proceed with the process
+	username := user.SavedName
+	if user.Username != "" {
+		username += fmt.Sprintf(" (@%s)", user.Username)
 	}
 
 	var until *time.Time
@@ -764,7 +836,7 @@ func handleSuspendDuration(b *bot.Bot, update tgbotapi.Update) error {
 
 	b.SetAdminProcess(adminChatID, bot.ProcessTypeSuspension, duration)
 
-	if err := b.EditMessage(update.CallbackQuery.Message.Chat.ID, update.CallbackQuery.Message.MessageID, "введите telegram username пользователя:"); err != nil {
+	if err := b.EditMessage(update.CallbackQuery.Message.Chat.ID, update.CallbackQuery.Message.MessageID, "введите telegram username пользователя или перешлите его сообщение сюда:"); err != nil {
 		return fmt.Errorf("failed to edit message: %w", err)
 	}
 
@@ -813,7 +885,7 @@ func handleBanDuration(b *bot.Bot, update tgbotapi.Update) error {
 
 	b.SetAdminProcess(adminChatID, bot.ProcessTypeBan, duration)
 
-	if err := b.EditMessage(update.CallbackQuery.Message.Chat.ID, update.CallbackQuery.Message.MessageID, "введите telegram username пользователя:"); err != nil {
+	if err := b.EditMessage(update.CallbackQuery.Message.Chat.ID, update.CallbackQuery.Message.MessageID, "введите telegram username пользователя или перешлите его сообщение сюда:"); err != nil {
 		return fmt.Errorf("failed to edit message: %w", err)
 	}
 
@@ -823,19 +895,19 @@ func handleBanDuration(b *bot.Bot, update tgbotapi.Update) error {
 func handleUnbanPlayer(b *bot.Bot, update tgbotapi.Update) error {
 	adminChatID := update.Message.From.ID
 	b.SetAdminProcess(adminChatID, bot.ProcessTypeUnban, "")
-	return b.SendMessage(update.Message.Chat.ID, "введите telegram username пользователя для разбана:")
+	return b.SendMessage(update.Message.Chat.ID, "введите telegram username пользователя для разбана или перешлите его сообщение сюда:")
 }
 
 func handleAllowToGreen(b *bot.Bot, update tgbotapi.Update) error {
 	adminChatID := update.Message.From.ID
 	b.SetAdminProcess(adminChatID, bot.ProcessTypeAllowToGreen, "")
-	return b.SendMessage(update.Message.Chat.ID, "введите telegram username пользователя для разрешения участия в зелёных турнирах:")
+	return b.SendMessage(update.Message.Chat.ID, "введите telegram username пользователя или перешлите его сообщение сюда для разрешения участия в зелёных турнирах:")
 }
 
 func handleAdmitToGreen(b *bot.Bot, update tgbotapi.Update) error {
 	adminChatID := update.Message.From.ID
 	b.SetAdminProcess(adminChatID, bot.ProcessTypeAdmitToGreen, "")
-	return b.SendMessage(update.Message.Chat.ID, "учтите, игрок всё равно может не пройти по рейтингу. эта команда просто снимет внутрней бан.\n\nвведите telegram_username пользователя для допуска к зелёным турнирам:")
+	return b.SendMessage(update.Message.Chat.ID, "учтите, игрок всё равно может не пройти по рейтингу. эта команда просто снимет внутрней бан.\n\nвведите telegram_username пользователя или перешлите его сообщение сюда для допуска к зелёным турнирам:")
 }
 
 func handleTestTransliteration(b *bot.Bot, update tgbotapi.Update) error {

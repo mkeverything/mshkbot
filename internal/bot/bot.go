@@ -187,7 +187,7 @@ func (b *Bot) routeUpdate(
 // handles incoming updates with provided handler set
 func (b *Bot) processUpdate(update tgbotapi.Update, handlers HandlerSet) error {
 	// handle command updates
-	if update.Message != nil && update.Message.IsCommand() {
+	if update.Message != nil && update.Message.IsCommand() && update.Message.ForwardDate == 0 {
 		command := update.Message.Command()
 		if handler, exists := handlers.Commands[command]; exists {
 			if err := handler(b, update); err != nil {
