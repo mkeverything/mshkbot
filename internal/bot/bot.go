@@ -531,3 +531,7 @@ func (b *Bot) ClearAdminProcess(adminChatID int64) {
 func (b *Bot) SetAdminProcessWithConfig(adminID int64, processType AdminProcessType, step string, config *EventConfig) {
 	b.adminProcesses.SetWithConfig(adminID, processType, step, config)
 }
+
+func (b *Bot) SetPlanTournamentState(adminID int64, step string, state *PlanTournamentState) {
+	b.adminProcesses.SetPlanTournamentState(adminID, step, state)
+}

@@ -40,3 +40,25 @@ type TournamentMetadata struct {
 	AnnouncementIntro     string `json:"announcement_intro"`
 	Exists                bool   `json:"exists"`
 }
+
+type PlannedTournament struct {
+	ID                string    `json:"id"`
+	Name              string    `json:"name"`
+	StartTime         time.Time `json:"start_time"`
+	EndTime           time.Time `json:"end_time"`
+	Limit             int       `json:"limit"`
+	LichessLimit      int       `json:"lichess_limit"`
+	ChesscomLimit     int       `json:"chesscom_limit"`
+	Intro             string    `json:"intro"`
+	Status            string    `json:"status"`
+	CreatedAt         time.Time `json:"created_at"`
+	StartedAt         time.Time `json:"started_at,omitempty"`
+	AnnouncementMsgID int       `json:"announcement_msg_id,omitempty"`
+}
+
+const (
+	StatusPlanned   = "planned"
+	StatusActive    = "active"
+	StatusCompleted = "completed"
+	StatusCancelled = "cancelled"
+)

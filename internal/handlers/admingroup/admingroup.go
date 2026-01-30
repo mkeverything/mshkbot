@@ -30,8 +30,11 @@ func GetHandlers(s *cron.Scheduler) bot.HandlerSet {
 			"tournament":           handleTournament,
 			"tournament_json":      handleTournamentJSON,
 			"stop_tournament":      handleStopTournament,
-			"create_event":         handleCreateEvent,
-			"start_custom":         handleStartCustomTournament,
+			"plan_tournament":      handlePlanTournament,
+			"planned_tournaments":  handlePlannedTournaments,
+			"start_tournament":     handleStartTournament,
+			"cancel_tournament":    handleCancelTournament,
+			"edit_tournament":      handleEditTournament,
 			"suspend_from_green":   handleSuspendFromGreen,
 			"ban_player":           handleBanPlayer,
 			"unban_player":         handleUnbanPlayer,
@@ -44,24 +47,28 @@ func GetHandlers(s *cron.Scheduler) bot.HandlerSet {
 		},
 		Messages: []func(b *bot.Bot, update tgbotapi.Update) error{
 			handleScheduleFieldInput,
+			handlePlanTournamentInput,
+			handleEditTournamentInput,
 			handleAdminMessage,
-			handleCreateEventInput,
-			handleStartCustomInput,
 		},
 		Callbacks: map[string]func(b *bot.Bot, update tgbotapi.Update) error{
-			"suspend_duration":   handleSuspendDuration,
-			"ban_duration":       handleBanDuration,
-			"schedule":           handleScheduleCallback,
-			"create_event_param": handleCreateEventParam,
-			"start_custom_param": handleStartCustomParam,
-			"stop_tournament":    handleStopTournamentCallback,
-			"force_checkout":     handleForceCheckoutCallback,
+			"suspend_duration":       handleSuspendDuration,
+			"ban_duration":           handleBanDuration,
+			"schedule":               handleScheduleCallback,
+			"stop_tournament":        handleStopTournamentCallback,
+			"force_checkout":         handleForceCheckoutCallback,
+			"plan_tournament":        handlePlanTournamentCallback,
+			"start_tournament":       handleStartTournamentCallback,
+			"cancel_tournament":      handleCancelTournamentCallback,
+			"edit_tournament":        handleEditTournamentCallback,
+			"edit_tournament_select": handleEditTournamentCallback,
+			"edit_tournament_field":  handleEditTournamentCallback,
 		},
 	}
 }
 
 func handleHelp(b *bot.Bot, update tgbotapi.Update) error {
-	return b.SendMessage(update.Message.Chat.ID, "команды администратора:\n\n/tournament - показать состояние турнира\n\n/start_custom - создать кастомный турнир с настройками\n\n/stop_tournament - остановить текущий турнир\n\n/create_event - создать событие для использования в будущем\n\n/send_schedule - показать расписание на неделю\n\n/suspend_from_green - отстранить пользователя от зелёных турниров\n\n/admit_to_green - допустить пользователя к зелёным турнирам\n\n/allow_to_green - разрешить пользователю участие в зелёном турнире вручную\n\n/force_checkout - принудительно выписать пользователя из турнира\n\n/ban_player - забанить пользователя\n\n/unban_player - разбанить пользователя")
+	return b.SendMessage(update.Message.Chat.ID, "команды администратора:\n\n/tournament - показать состояние текущего турнира\n\n/plan_tournament - запланировать новый турнир с расписанием\n\n/planned_tournaments - список всех запланированных турниров\n\n/start_tournament - немедленно запустить запланированный турнир\n\n/cancel_tournament - отменить запланированный турнир\n\n/edit_tournament - изменить запланированный турнир\n\n/stop_tournament - остановить текущий турнир\n\n/send_schedule - показать расписание на неделю\n\n/suspend_from_green - отстранить пользователя от зелёных турниров\n\n/admit_to_green - допустить пользователя к зелёным турнирам\n\n/allow_to_green - разрешить пользователю участие в зелёном турнире вручную\n\n/force_checkout - принудительно выписать пользователя из турнира\n\n/ban_player - забанить пользователя\n\n/unban_player - разбанить пользователя")
 }
 
 func handleTournamentJSON(b *bot.Bot, update tgbotapi.Update) error {
@@ -287,344 +294,6 @@ func handleStopTournamentCallback(b *bot.Bot, update tgbotapi.Update) error {
 	return nil
 }
 
-func handleCreateEvent(b *bot.Bot, update tgbotapi.Update) error {
-	if b.Tournament.Metadata.Exists {
-		return b.SendMessage(update.Message.Chat.ID, "турнир уже создан. остановите его перед созданием нового события.")
-	}
-
-	adminChatID := update.Message.From.ID
-	config := &bot.EventConfig{
-		Limit:         0,
-		LichessLimit:  0,
-		ChesscomLimit: 0,
-		Intro:         "",
-	}
-	b.SetAdminProcessWithConfig(adminChatID, bot.ProcessTypeCreateEvent, "limit", config)
-
-	keyboard := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("отмена", "create_event_param:cancel"),
-		),
-	)
-
-	msg := tgbotapi.NewMessage(update.Message.Chat.ID, "*создание кастомного события*\n\nшаг 1: введите лимит участников (число, например: 24)")
-	msg.ParseMode = "Markdown"
-	msg.ReplyMarkup = keyboard
-
-	_, err := b.Client.Send(msg)
-	return err
-}
-
-func handleStartCustomTournament(b *bot.Bot, update tgbotapi.Update) error {
-	if b.Tournament.Metadata.Exists {
-		return b.SendMessage(update.Message.Chat.ID, "турнир уже создан. остановите его перед созданием нового.")
-	}
-
-	adminChatID := update.Message.From.ID
-	config := &bot.EventConfig{
-		Limit:         0,
-		LichessLimit:  0,
-		ChesscomLimit: 0,
-		Intro:         "",
-	}
-	b.SetAdminProcessWithConfig(adminChatID, bot.ProcessTypeStartCustom, "limit", config)
-
-	keyboard := tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("отмена", "start_custom_param:cancel"),
-		),
-	)
-
-	msg := tgbotapi.NewMessage(update.Message.Chat.ID, "*запуск кастомного турнира*\n\nшаг 1: введите лимит участников (число, например: 24)")
-	msg.ParseMode = "Markdown"
-	msg.ReplyMarkup = keyboard
-
-	_, err := b.Client.Send(msg)
-	return err
-}
-
-func handleCreateEventInput(b *bot.Bot, update tgbotapi.Update) error {
-	if update.Message == nil {
-		return nil
-	}
-
-	adminChatID := update.Message.From.ID
-	process, exists := b.GetAdminProcess(adminChatID)
-	if !exists || process.Type != bot.ProcessTypeCreateEvent {
-		return nil
-	}
-
-	text := strings.TrimSpace(update.Message.Text)
-	if text == "" {
-		return nil
-	}
-
-	config := process.EventConfig
-	var nextStep string
-	var nextPrompt string
-
-	switch process.CurrentStep {
-	case "limit":
-		intVal, parseErr := strconv.Atoi(text)
-		if parseErr != nil || intVal <= 0 {
-			return b.SendMessage(update.Message.Chat.ID, "введите положительное число")
-		}
-		config.Limit = intVal
-		nextStep = "lichess_limit"
-		nextPrompt = "*создание кастомного события*\n\nшаг 2: введите лимит рейтинга lichess (0 = без лимита, например: 1600)"
-
-	case "lichess_limit":
-		intVal, parseErr := strconv.Atoi(text)
-		if parseErr != nil || intVal < 0 {
-			return b.SendMessage(update.Message.Chat.ID, "введите положительное число или 0")
-		}
-		config.LichessLimit = intVal
-		nextStep = "chesscom_limit"
-		nextPrompt = "*создание кастомного события*\n\nшаг 3: введите лимит рейтинга chess.com (0 = без лимита, например: 1200)"
-
-	case "chesscom_limit":
-		intVal, parseErr := strconv.Atoi(text)
-		if parseErr != nil || intVal < 0 {
-			return b.SendMessage(update.Message.Chat.ID, "введите положительное число или 0")
-		}
-		config.ChesscomLimit = intVal
-		nextStep = "intro"
-		nextPrompt = "*создание кастомного события*\n\nшаг 4: введите текст объявления"
-
-	case "intro":
-		config.Intro = text
-		nextStep = "confirm"
-		nextPrompt = fmt.Sprintf("*проверьте конфигурацию события*\n\nлимит: %d\nlichess<%d, chesscom<%d\n\nтекст: _%s_\n\nсоздать событие?",
-			config.Limit, config.LichessLimit, config.ChesscomLimit, text)
-
-		keyboard := tgbotapi.NewInlineKeyboardMarkup(
-			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData("создать", "create_event_param:confirm"),
-				tgbotapi.NewInlineKeyboardButtonData("отмена", "create_event_param:cancel"),
-			),
-		)
-
-		msg := tgbotapi.NewMessage(update.Message.Chat.ID, nextPrompt)
-		msg.ParseMode = "Markdown"
-		msg.ReplyMarkup = keyboard
-		_, err := b.Client.Send(msg)
-		if err != nil {
-			return err
-		}
-		return b.GiveReaction(update.Message.Chat.ID, update.Message.MessageID, utils.ApproveEmoji())
-
-	default:
-		return nil
-	}
-
-	if nextStep != "" {
-		b.SetAdminProcessWithConfig(adminChatID, bot.ProcessTypeCreateEvent, nextStep, config)
-
-		keyboard := tgbotapi.NewInlineKeyboardMarkup(
-			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData("отмена", "create_event_param:cancel"),
-			),
-		)
-
-		msg := tgbotapi.NewMessage(update.Message.Chat.ID, nextPrompt)
-		msg.ParseMode = "Markdown"
-		msg.ReplyMarkup = keyboard
-		_, err := b.Client.Send(msg)
-		if err != nil {
-			return err
-		}
-	}
-
-	return b.GiveReaction(update.Message.Chat.ID, update.Message.MessageID, utils.ApproveEmoji())
-}
-
-func handleStartCustomInput(b *bot.Bot, update tgbotapi.Update) error {
-	if update.Message == nil {
-		return nil
-	}
-
-	adminChatID := update.Message.From.ID
-	process, exists := b.GetAdminProcess(adminChatID)
-	if !exists || process.Type != bot.ProcessTypeStartCustom {
-		return nil
-	}
-
-	text := strings.TrimSpace(update.Message.Text)
-	if text == "" {
-		return nil
-	}
-
-	config := process.CustomConfig
-	var nextStep string
-	var nextPrompt string
-
-	switch process.CurrentStep {
-	case "limit":
-		intVal, parseErr := strconv.Atoi(text)
-		if parseErr != nil || intVal <= 0 {
-			return b.SendMessage(update.Message.Chat.ID, "введите положительное число")
-		}
-		config.Limit = intVal
-		nextStep = "lichess_limit"
-		nextPrompt = "*запуск кастомного турнира*\n\nшаг 2: введите лимит рейтинга lichess (0 = без лимита, например: 1600)"
-
-	case "lichess_limit":
-		intVal, parseErr := strconv.Atoi(text)
-		if parseErr != nil || intVal < 0 {
-			return b.SendMessage(update.Message.Chat.ID, "введите положительное число или 0")
-		}
-		config.LichessLimit = intVal
-		nextStep = "chesscom_limit"
-		nextPrompt = "*запуск кастомного турнира*\n\nшаг 3: введите лимит рейтинга chess.com (0 = без лимита, например: 1200)"
-
-	case "chesscom_limit":
-		intVal, parseErr := strconv.Atoi(text)
-		if parseErr != nil || intVal < 0 {
-			return b.SendMessage(update.Message.Chat.ID, "введите положительное число или 0")
-		}
-		config.ChesscomLimit = intVal
-		nextStep = "intro"
-		nextPrompt = "*запуск кастомного турнира*\n\nшаг 4: введите текст объявления"
-
-	case "intro":
-		config.Intro = text
-		nextStep = "confirm"
-		nextPrompt = fmt.Sprintf("*проверьте конфигурацию турнира*\n\nлимит: %d\nlichess<%d, chesscom<%d\n\nтекст: _%s_\n\nзапустить турнир?",
-			config.Limit, config.LichessLimit, config.ChesscomLimit, text)
-
-		keyboard := tgbotapi.NewInlineKeyboardMarkup(
-			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData("запустить", "start_custom_param:confirm"),
-				tgbotapi.NewInlineKeyboardButtonData("отмена", "start_custom_param:cancel"),
-			),
-		)
-
-		msg := tgbotapi.NewMessage(update.Message.Chat.ID, nextPrompt)
-		msg.ParseMode = "Markdown"
-		msg.ReplyMarkup = keyboard
-		_, err := b.Client.Send(msg)
-		if err != nil {
-			return err
-		}
-		return b.GiveReaction(update.Message.Chat.ID, update.Message.MessageID, utils.ApproveEmoji())
-
-	default:
-		return nil
-	}
-
-	if nextStep != "" {
-		b.SetAdminProcessWithConfig(adminChatID, bot.ProcessTypeStartCustom, nextStep, config)
-
-		keyboard := tgbotapi.NewInlineKeyboardMarkup(
-			tgbotapi.NewInlineKeyboardRow(
-				tgbotapi.NewInlineKeyboardButtonData("отмена", "start_custom_param:cancel"),
-			),
-		)
-
-		msg := tgbotapi.NewMessage(update.Message.Chat.ID, nextPrompt)
-		msg.ParseMode = "Markdown"
-		msg.ReplyMarkup = keyboard
-		_, err := b.Client.Send(msg)
-		if err != nil {
-			return err
-		}
-	}
-
-	return b.GiveReaction(update.Message.Chat.ID, update.Message.MessageID, utils.ApproveEmoji())
-}
-
-func handleCreateEventParam(b *bot.Bot, update tgbotapi.Update) error {
-	callback := tgbotapi.NewCallback(update.CallbackQuery.ID, "")
-	if _, err := b.Request(callback); err != nil {
-		log.Printf("failed to answer callback: %v", err)
-	}
-
-	chatID := update.CallbackQuery.Message.Chat.ID
-	messageID := update.CallbackQuery.Message.MessageID
-	data := update.CallbackQuery.Data
-
-	parts := strings.Split(data, ":")
-	if len(parts) < 2 {
-		return fmt.Errorf("invalid callback data: %s", data)
-	}
-
-	action := parts[1]
-
-	if action == "cancel" {
-		adminChatID := update.CallbackQuery.From.ID
-		b.ClearAdminProcess(adminChatID)
-		return b.EditMessage(chatID, messageID, "создание события отменено")
-	}
-
-	if action == "confirm" {
-		adminChatID := update.CallbackQuery.From.ID
-		process, exists := b.GetAdminProcess(adminChatID)
-		if !exists || process.EventConfig == nil {
-			return b.EditMessage(chatID, messageID, "ошибка: конфигурация не найдена")
-		}
-
-		config := process.EventConfig
-		b.ClearAdminProcess(adminChatID)
-
-		return b.EditMessage(chatID, messageID, fmt.Sprintf("✅ событие создано:\n\nлимит: %d\nlichess<%d, chesscom<%d\n\nтекст: _%s_\n\nиспользуйте /start_custom для запуска турнира с этой конфигурацией",
-			config.Limit, config.LichessLimit, config.ChesscomLimit, config.Intro))
-	}
-
-	return nil
-}
-
-func handleStartCustomParam(b *bot.Bot, update tgbotapi.Update) error {
-	adminInfo := logger.ExtractUserInfoFromUpdate(&update, "admin group")
-
-	callback := tgbotapi.NewCallback(update.CallbackQuery.ID, "")
-	if _, err := b.Request(callback); err != nil {
-		log.Printf("failed to answer callback: %v", err)
-	}
-
-	chatID := update.CallbackQuery.Message.Chat.ID
-	messageID := update.CallbackQuery.Message.MessageID
-	data := update.CallbackQuery.Data
-
-	parts := strings.Split(data, ":")
-	if len(parts) < 2 {
-		b.Logger.LogError("Tournament creation callback failed", adminInfo, "Invalid callback data format", fmt.Errorf("invalid callback data: %s", data))
-		return fmt.Errorf("invalid callback data: %s", data)
-	}
-
-	action := parts[1]
-
-	if action == "cancel" {
-		adminChatID := update.CallbackQuery.From.ID
-		b.ClearAdminProcess(adminChatID)
-		b.Logger.LogInfo("Tournament creation cancelled", adminInfo, "Admin cancelled tournament creation")
-		return b.EditMessage(chatID, messageID, "создание турнира отменено")
-	}
-
-	if action == "confirm" {
-		adminChatID := update.CallbackQuery.From.ID
-		process, exists := b.GetAdminProcess(adminChatID)
-		if !exists || process.CustomConfig == nil {
-			b.Logger.LogError("Tournament creation failed", adminInfo, "Configuration not found for tournament creation", fmt.Errorf("config not found"))
-			return b.EditMessage(chatID, messageID, "ошибка: конфигурация не найдена")
-		}
-
-		config := process.CustomConfig
-		b.ClearAdminProcess(adminChatID)
-
-		ctx := context.Background()
-		if err := b.Tournament.CreateTournament(ctx, config.Limit, config.LichessLimit, config.ChesscomLimit, config.Intro); err != nil {
-			b.Logger.LogError("Tournament creation failed", adminInfo, fmt.Sprintf("Failed to create tournament with limit=%d, lichess=%d, chesscom=%d", config.Limit, config.LichessLimit, config.ChesscomLimit), err)
-			return b.EditMessage(chatID, messageID, fmt.Sprintf("ошибка при создании турнира: %v", err))
-		}
-
-		b.Logger.LogSuccess("Tournament created", adminInfo, fmt.Sprintf("Tournament created with limit=%d, lichess_limit=%d, chesscom_limit=%d", config.Limit, config.LichessLimit, config.ChesscomLimit))
-		return b.EditMessage(chatID, messageID, fmt.Sprintf("✅ турнир запущен:\n\nлимит: %d\nlichess<%d, chesscom<%d\n\nтекст: _%s_",
-			config.Limit, config.LichessLimit, config.ChesscomLimit, config.Intro))
-	}
-
-	return nil
-}
-
 // PrivacyHiddenMessage indicates that privacy settings hide the user ID
 const PrivacyHiddenMessage = `этот человек выставил максимальные настройки приватности и его невозможно определить автоматически, так что вам придётся сделать следующее:
 
@@ -704,6 +373,11 @@ func handleAdminMessage(b *bot.Bot, update tgbotapi.Update) error {
 	process, exists := b.GetAdminProcess(adminChatID)
 	if !exists {
 		log.Printf("admin group message: %s", update.Message.Text)
+		return nil
+	}
+
+	// Skip user resolution for tournament planning processes
+	if process.Type == bot.ProcessTypePlanTournament {
 		return nil
 	}
 

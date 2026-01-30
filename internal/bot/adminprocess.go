@@ -8,23 +8,42 @@ import (
 type AdminProcessType string
 
 const (
-	ProcessTypeSuspension   AdminProcessType = "suspension"
-	ProcessTypeBan          AdminProcessType = "ban"
-	ProcessTypeUnban        AdminProcessType = "unban"
-	ProcessTypeAdmitToGreen AdminProcessType = "admit_to_green"
-	ProcessTypeAllowToGreen AdminProcessType = "allow_to_green"
-	ProcessTypeCreateEvent  AdminProcessType = "create_event"
-	ProcessTypeStartCustom  AdminProcessType = "start_custom"
+	ProcessTypeSuspension     AdminProcessType = "suspension"
+	ProcessTypeBan            AdminProcessType = "ban"
+	ProcessTypeUnban          AdminProcessType = "unban"
+	ProcessTypeAdmitToGreen   AdminProcessType = "admit_to_green"
+	ProcessTypeAllowToGreen   AdminProcessType = "allow_to_green"
+	ProcessTypeCreateEvent    AdminProcessType = "create_event"
+	ProcessTypeStartCustom    AdminProcessType = "start_custom"
+	ProcessTypePlanTournament AdminProcessType = "plan_tournament"
 )
 
 type AdminProcess struct {
-	Type         AdminProcessType
-	AdminID      int64
-	Duration     string
-	CreatedAt    time.Time
-	EventConfig  *EventConfig
-	CustomConfig *EventConfig
-	CurrentStep  string
+	Type                AdminProcessType
+	AdminID             int64
+	Duration            string
+	CreatedAt           time.Time
+	EventConfig         *EventConfig
+	CustomConfig        *EventConfig
+	PlanTournamentState *PlanTournamentState
+	CurrentStep         string
+}
+
+type PlanTournamentState struct {
+	Tournament *PlannedTournamentConfig
+}
+
+type PlannedTournamentConfig struct {
+	ID            string
+	Name          string
+	Date          string
+	StartTime     string
+	EndDate       string
+	EndTime       string
+	Limit         int
+	LichessLimit  int
+	ChesscomLimit int
+	Intro         string
 }
 
 type EventConfig struct {
@@ -70,6 +89,18 @@ func (s *AdminProcessStore) SetWithConfig(adminID int64, processType AdminProces
 		s.processes[adminID].EventConfig = config
 	} else if processType == ProcessTypeStartCustom {
 		s.processes[adminID].CustomConfig = config
+	}
+}
+
+func (s *AdminProcessStore) SetPlanTournamentState(adminID int64, step string, state *PlanTournamentState) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.processes[adminID] = &AdminProcess{
+		Type:                ProcessTypePlanTournament,
+		AdminID:             adminID,
+		CreatedAt:           time.Now(),
+		CurrentStep:         step,
+		PlanTournamentState: state,
 	}
 }
 
