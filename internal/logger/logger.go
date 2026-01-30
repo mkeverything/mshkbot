@@ -3,7 +3,6 @@ package logger
 import (
 	"fmt"
 	"log"
-	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -43,7 +42,6 @@ type LogEntry struct {
 	ChatType  string
 	Details   string
 	Error     error
-	Timestamp time.Time
 }
 
 // New creates a new logger instance
@@ -64,10 +62,6 @@ func (l *Logger) IsEnabled() bool {
 func (l *Logger) Log(entry LogEntry) {
 	if !l.enabled {
 		return
-	}
-
-	if entry.Timestamp.IsZero() {
-		entry.Timestamp = time.Now().UTC()
 	}
 
 	message := l.formatLogMessage(entry)
@@ -189,22 +183,21 @@ func (l *Logger) formatLogMessage(entry LogEntry) string {
 
 	// Build message
 	message := fmt.Sprintf("%s *%s*\n\n", emoji, entry.Action)
-	message += fmt.Sprintf("👤 *User:* %s\n", userLink)
-	message += fmt.Sprintf("🆔 *ID:* `%d`\n", entry.UserID)
+	message += fmt.Sprintf("*User:* %s\n", userLink)
+	message += fmt.Sprintf("*ID:* `%d`\n", entry.UserID)
 
 	if entry.Username != "" {
-		message += fmt.Sprintf("📱 *Username:* @%s\n", entry.Username)
+		message += fmt.Sprintf("*Username:* @%s\n", entry.Username)
 	}
 
-	message += fmt.Sprintf("💬 *Chat:* `%d` (%s)\n", entry.ChatID, entry.ChatType)
-	message += fmt.Sprintf("🕐 *Time:* `%s`\n", entry.Timestamp.Format("2006-01-02 15:04:05 MST"))
+	message += fmt.Sprintf("*Chat:* `%d` (%s)\n", entry.ChatID, entry.ChatType)
 
 	if entry.Details != "" {
-		message += fmt.Sprintf("\n📝 *Details:* %s", entry.Details)
+		message += fmt.Sprintf("\n*Details:* %s", entry.Details)
 	}
 
 	if entry.Error != nil {
-		message += fmt.Sprintf("\n\n⚠️ *Error:* `%s`", entry.Error.Error())
+		message += fmt.Sprintf("\n\n*Error:* `%s`", entry.Error.Error())
 	}
 
 	return message
