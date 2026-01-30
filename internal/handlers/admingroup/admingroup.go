@@ -14,6 +14,7 @@ import (
 	"github.com/sukalov/mshkbot/internal/cron"
 	"github.com/sukalov/mshkbot/internal/db"
 	"github.com/sukalov/mshkbot/internal/handlers/maingroup"
+	"github.com/sukalov/mshkbot/internal/logger"
 	"github.com/sukalov/mshkbot/internal/types"
 	"github.com/sukalov/mshkbot/internal/utils"
 )
@@ -218,7 +219,11 @@ func buildTournamentMessageForAdmin(b *bot.Bot) (string, error) {
 }
 
 func handleStopTournament(b *bot.Bot, update tgbotapi.Update) error {
+	adminInfo := logger.ExtractUserInfoFromUpdate(&update, "admin group")
+	b.Logger.LogInfo("Tournament stop initiated", adminInfo, "Admin initiated tournament stop process")
+
 	if !b.Tournament.Metadata.Exists {
+		b.Logger.LogInfo("Tournament stop failed - no tournament", adminInfo, "Admin attempted to stop tournament but no tournament exists")
 		return b.SendMessage(update.Message.Chat.ID, "турнир не создан")
 	}
 
@@ -238,6 +243,8 @@ func handleStopTournament(b *bot.Bot, update tgbotapi.Update) error {
 }
 
 func handleStopTournamentCallback(b *bot.Bot, update tgbotapi.Update) error {
+	adminInfo := logger.ExtractUserInfoFromUpdate(&update, "admin group")
+
 	callback := tgbotapi.NewCallback(update.CallbackQuery.ID, "")
 	if _, err := b.Request(callback); err != nil {
 		log.Printf("failed to answer callback: %v", err)
@@ -249,12 +256,14 @@ func handleStopTournamentCallback(b *bot.Bot, update tgbotapi.Update) error {
 
 	parts := strings.Split(data, ":")
 	if len(parts) < 2 {
+		b.Logger.LogError("Tournament stop callback failed", adminInfo, "Invalid callback data format", fmt.Errorf("invalid callback data: %s", data))
 		return fmt.Errorf("invalid callback data: %s", data)
 	}
 
 	action := parts[1]
 
 	if action == "cancel" {
+		b.Logger.LogInfo("Tournament stop cancelled", adminInfo, "Admin cancelled tournament stop")
 		return b.EditMessage(chatID, messageID, "отмена: турнир не будет остановлен")
 	}
 
@@ -264,11 +273,14 @@ func handleStopTournamentCallback(b *bot.Bot, update tgbotapi.Update) error {
 		if announcementMessageID != 0 {
 			if err := b.UnpinMessage(b.GetMainGroupID(), announcementMessageID); err != nil {
 				log.Printf("failed to unpin message: %v", err)
+				b.Logger.LogError("Tournament stop - unpin failed", adminInfo, "Failed to unpin announcement message", err)
 			}
 		}
 		if err := b.Tournament.RemoveTournament(ctx); err != nil {
+			b.Logger.LogError("Tournament stop failed", adminInfo, "Failed to remove tournament", err)
 			return b.EditMessage(chatID, messageID, fmt.Sprintf("ошибка при остановке турнира: %v", err))
 		}
+		b.Logger.LogSuccess("Tournament stopped", adminInfo, "Tournament successfully stopped by admin")
 		return b.EditMessage(chatID, messageID, "✅ турнир остановлен")
 	}
 
@@ -562,6 +574,8 @@ func handleCreateEventParam(b *bot.Bot, update tgbotapi.Update) error {
 }
 
 func handleStartCustomParam(b *bot.Bot, update tgbotapi.Update) error {
+	adminInfo := logger.ExtractUserInfoFromUpdate(&update, "admin group")
+
 	callback := tgbotapi.NewCallback(update.CallbackQuery.ID, "")
 	if _, err := b.Request(callback); err != nil {
 		log.Printf("failed to answer callback: %v", err)
@@ -573,6 +587,7 @@ func handleStartCustomParam(b *bot.Bot, update tgbotapi.Update) error {
 
 	parts := strings.Split(data, ":")
 	if len(parts) < 2 {
+		b.Logger.LogError("Tournament creation callback failed", adminInfo, "Invalid callback data format", fmt.Errorf("invalid callback data: %s", data))
 		return fmt.Errorf("invalid callback data: %s", data)
 	}
 
@@ -581,6 +596,7 @@ func handleStartCustomParam(b *bot.Bot, update tgbotapi.Update) error {
 	if action == "cancel" {
 		adminChatID := update.CallbackQuery.From.ID
 		b.ClearAdminProcess(adminChatID)
+		b.Logger.LogInfo("Tournament creation cancelled", adminInfo, "Admin cancelled tournament creation")
 		return b.EditMessage(chatID, messageID, "создание турнира отменено")
 	}
 
@@ -588,6 +604,7 @@ func handleStartCustomParam(b *bot.Bot, update tgbotapi.Update) error {
 		adminChatID := update.CallbackQuery.From.ID
 		process, exists := b.GetAdminProcess(adminChatID)
 		if !exists || process.CustomConfig == nil {
+			b.Logger.LogError("Tournament creation failed", adminInfo, "Configuration not found for tournament creation", fmt.Errorf("config not found"))
 			return b.EditMessage(chatID, messageID, "ошибка: конфигурация не найдена")
 		}
 
@@ -596,9 +613,11 @@ func handleStartCustomParam(b *bot.Bot, update tgbotapi.Update) error {
 
 		ctx := context.Background()
 		if err := b.Tournament.CreateTournament(ctx, config.Limit, config.LichessLimit, config.ChesscomLimit, config.Intro); err != nil {
+			b.Logger.LogError("Tournament creation failed", adminInfo, fmt.Sprintf("Failed to create tournament with limit=%d, lichess=%d, chesscom=%d", config.Limit, config.LichessLimit, config.ChesscomLimit), err)
 			return b.EditMessage(chatID, messageID, fmt.Sprintf("ошибка при создании турнира: %v", err))
 		}
 
+		b.Logger.LogSuccess("Tournament created", adminInfo, fmt.Sprintf("Tournament created with limit=%d, lichess_limit=%d, chesscom_limit=%d", config.Limit, config.LichessLimit, config.ChesscomLimit))
 		return b.EditMessage(chatID, messageID, fmt.Sprintf("✅ турнир запущен:\n\nлимит: %d\nlichess<%d, chesscom<%d\n\nтекст: _%s_",
 			config.Limit, config.LichessLimit, config.ChesscomLimit, config.Intro))
 	}
@@ -680,6 +699,7 @@ func handleAdminMessage(b *bot.Bot, update tgbotapi.Update) error {
 	}
 
 	adminChatID := update.Message.From.ID
+	adminInfo := logger.ExtractUserInfoFromUpdate(&update, "admin group")
 
 	process, exists := b.GetAdminProcess(adminChatID)
 	if !exists {
@@ -693,6 +713,7 @@ func handleAdminMessage(b *bot.Bot, update tgbotapi.Update) error {
 			return b.SendMessage(update.Message.Chat.ID, PrivacyHiddenMessage)
 		}
 		// Don't clear process on input error to allow retry
+		b.Logger.LogError("User resolution failed", adminInfo, fmt.Sprintf("Failed to resolve user for %s: %v", process.Type, err), err)
 		return b.SendMessage(update.Message.Chat.ID, fmt.Sprintf("ошибка: %v", err))
 	}
 
@@ -700,6 +721,14 @@ func handleAdminMessage(b *bot.Bot, update tgbotapi.Update) error {
 	username := user.SavedName
 	if user.Username != "" {
 		username += fmt.Sprintf(" (@%s)", user.Username)
+	}
+
+	// Create user info for the target user
+	targetUserInfo := &logger.UserInfo{
+		ID:        user.ChatID,
+		Username:  user.Username,
+		FirstName: user.SavedName,
+		ChatType:  "admin group",
 	}
 
 	var until *time.Time
@@ -716,11 +745,13 @@ func handleAdminMessage(b *bot.Bot, update tgbotapi.Update) error {
 			until = &t
 		default:
 			b.ClearAdminProcess(adminChatID)
+			b.Logger.LogError("Suspension failed", adminInfo, "Unknown duration for suspension", fmt.Errorf("unknown duration: %s", process.Duration))
 			return b.SendMessage(update.Message.Chat.ID, "неизвестная длительность")
 		}
 
 		if err := db.SetNotGreenUntil(user.ChatID, until); err != nil {
 			b.ClearAdminProcess(adminChatID)
+			b.Logger.LogError("Suspension failed", adminInfo, fmt.Sprintf("Failed to suspend user %s from green tournaments", username), err)
 			return b.SendMessage(update.Message.Chat.ID, fmt.Sprintf("ошибка при обновлении статуса: %v", err))
 		}
 
@@ -731,6 +762,7 @@ func handleAdminMessage(b *bot.Bot, update tgbotapi.Update) error {
 			durationText = "на месяц"
 		}
 
+		b.Logger.LogSuccess("User suspended from green tournaments", targetUserInfo, fmt.Sprintf("User suspended from green tournaments by admin %s for %s", adminInfo.Username, durationText))
 		return b.SendMessage(update.Message.Chat.ID, fmt.Sprintf("пользователь %s отстранён от зелёных %s", username, durationText))
 
 	case bot.ProcessTypeBan:
@@ -743,11 +775,13 @@ func handleAdminMessage(b *bot.Bot, update tgbotapi.Update) error {
 			until = &t
 		default:
 			b.ClearAdminProcess(adminChatID)
+			b.Logger.LogError("Ban failed", adminInfo, "Unknown duration for ban", fmt.Errorf("unknown duration: %s", process.Duration))
 			return b.SendMessage(update.Message.Chat.ID, "неизвестная длительность")
 		}
 
 		if err := db.SetBannedUntil(user.ChatID, until); err != nil {
 			b.ClearAdminProcess(adminChatID)
+			b.Logger.LogError("Ban failed", adminInfo, fmt.Sprintf("Failed to ban user %s", username), err)
 			return b.SendMessage(update.Message.Chat.ID, fmt.Sprintf("ошибка при обновлении статуса: %v", err))
 		}
 
@@ -758,36 +792,43 @@ func handleAdminMessage(b *bot.Bot, update tgbotapi.Update) error {
 			durationText = "на месяц"
 		}
 
+		b.Logger.LogSuccess("User banned", targetUserInfo, fmt.Sprintf("User banned by admin %s for %s", adminInfo.Username, durationText))
 		return b.SendMessage(update.Message.Chat.ID, fmt.Sprintf("пользователь %s забанен %s", username, durationText))
 
 	case bot.ProcessTypeUnban:
 		if err := db.SetBannedUntil(user.ChatID, nil); err != nil {
 			b.ClearAdminProcess(adminChatID)
+			b.Logger.LogError("Unban failed", adminInfo, fmt.Sprintf("Failed to unban user %s", username), err)
 			return b.SendMessage(update.Message.Chat.ID, fmt.Sprintf("ошибка при обновлении статуса: %v", err))
 		}
 
 		b.ClearAdminProcess(adminChatID)
 
+		b.Logger.LogSuccess("User unbanned", targetUserInfo, fmt.Sprintf("User unbanned by admin %s", adminInfo.Username))
 		return b.SendMessage(update.Message.Chat.ID, fmt.Sprintf("пользователь %s разбанен", username))
 
 	case bot.ProcessTypeAdmitToGreen:
 		if err := db.SetNotGreenUntil(user.ChatID, nil); err != nil {
 			b.ClearAdminProcess(adminChatID)
+			b.Logger.LogError("Admit to green failed", adminInfo, fmt.Sprintf("Failed to admit user %s to green tournaments", username), err)
 			return b.SendMessage(update.Message.Chat.ID, fmt.Sprintf("ошибка при обновлении статуса: %v", err))
 		}
 
 		b.ClearAdminProcess(adminChatID)
 
+		b.Logger.LogSuccess("User admitted to green tournaments", targetUserInfo, fmt.Sprintf("User admitted to green tournaments by admin %s", adminInfo.Username))
 		return b.SendMessage(update.Message.Chat.ID, fmt.Sprintf("пользователь %s допущен к зелёным турнирам", username))
 
 	case bot.ProcessTypeAllowToGreen:
 		if err := db.SetAllowToGreen(user.ChatID, true); err != nil {
 			b.ClearAdminProcess(adminChatID)
+			b.Logger.LogError("Allow to green failed", adminInfo, fmt.Sprintf("Failed to allow user %s to green tournaments", username), err)
 			return b.SendMessage(update.Message.Chat.ID, fmt.Sprintf("ошибка при обновлении статуса: %v", err))
 		}
 
 		b.ClearAdminProcess(adminChatID)
 
+		b.Logger.LogSuccess("User allowed to green tournaments", targetUserInfo, fmt.Sprintf("User manually allowed to green tournaments by admin %s", adminInfo.Username))
 		return b.SendMessage(update.Message.Chat.ID, fmt.Sprintf("пользователю %s разрешено участие в зелёных турнирах вручную", username))
 	}
 
@@ -1177,7 +1218,11 @@ func handleScheduleFieldInput(b *bot.Bot, update tgbotapi.Update) error {
 }
 
 func handleForceCheckout(b *bot.Bot, update tgbotapi.Update) error {
+	adminInfo := logger.ExtractUserInfoFromUpdate(&update, "admin group")
+	b.Logger.LogInfo("Force checkout initiated", adminInfo, "Admin initiated force checkout process")
+
 	if !b.Tournament.Metadata.Exists {
+		b.Logger.LogInfo("Force checkout failed - no tournament", adminInfo, "Admin attempted force checkout but no tournament exists")
 		return b.SendMessage(update.Message.Chat.ID, "запись сейчас не идёт")
 	}
 
@@ -1189,8 +1234,11 @@ func handleForceCheckout(b *bot.Bot, update tgbotapi.Update) error {
 	}
 
 	if len(activePlayers) == 0 {
+		b.Logger.LogInfo("Force checkout - no players", adminInfo, "Admin attempted force checkout but no active players in tournament")
 		return b.SendMessage(update.Message.Chat.ID, "в турнире пока никого нет")
 	}
+
+	b.Logger.LogInfo("Force checkout - players listed", adminInfo, fmt.Sprintf("Admin shown %d active players for force checkout", len(activePlayers)))
 
 	var rows [][]tgbotapi.InlineKeyboardButton
 	for _, p := range activePlayers {
@@ -1207,6 +1255,8 @@ func handleForceCheckout(b *bot.Bot, update tgbotapi.Update) error {
 }
 
 func handleForceCheckoutCallback(b *bot.Bot, update tgbotapi.Update) error {
+	adminInfo := logger.ExtractUserInfoFromUpdate(&update, "admin group")
+
 	callback := tgbotapi.NewCallback(update.CallbackQuery.ID, "")
 	if _, err := b.Request(callback); err != nil {
 		log.Printf("failed to answer callback: %v", err)
@@ -1215,11 +1265,13 @@ func handleForceCheckoutCallback(b *bot.Bot, update tgbotapi.Update) error {
 	data := update.CallbackQuery.Data
 	parts := strings.Split(data, ":")
 	if len(parts) < 2 {
+		b.Logger.LogError("Force checkout callback failed", adminInfo, "Invalid callback data format", fmt.Errorf("invalid callback data: %s", data))
 		return fmt.Errorf("invalid callback data: %s", data)
 	}
 
 	playerID, err := strconv.Atoi(parts[1])
 	if err != nil {
+		b.Logger.LogError("Force checkout callback failed", adminInfo, "Invalid player ID in callback data", fmt.Errorf("invalid player id: %s", parts[1]))
 		return fmt.Errorf("invalid player id: %s", parts[1])
 	}
 
@@ -1233,7 +1285,16 @@ func handleForceCheckoutCallback(b *bot.Bot, update tgbotapi.Update) error {
 	}
 
 	if player == nil || (player.State != types.StateInTournament && player.State != types.StateQueued) {
+		b.Logger.LogInfo("Force checkout - player not found", adminInfo, fmt.Sprintf("Admin attempted to force checkout player %d but player not in tournament", playerID))
 		return b.EditMessage(update.CallbackQuery.Message.Chat.ID, update.CallbackQuery.Message.MessageID, "игрок уже не в турнире")
+	}
+
+	// Create user info for the target player
+	targetPlayerInfo := &logger.UserInfo{
+		ID:        int64(playerID),
+		Username:  player.Username,
+		FirstName: player.SavedName,
+		ChatType:  "admin group",
 	}
 
 	wasInTournament := player.State == types.StateInTournament
@@ -1242,21 +1303,27 @@ func handleForceCheckoutCallback(b *bot.Bot, update tgbotapi.Update) error {
 	updatedPlayer.CheckedOutTime = time.Now().UTC()
 
 	if err := b.Tournament.EditPlayer(ctx, playerID, updatedPlayer); err != nil {
+		b.Logger.LogError("Force checkout failed", adminInfo, fmt.Sprintf("Failed to force checkout player %s", player.SavedName), err)
 		return b.EditMessage(update.CallbackQuery.Message.Chat.ID, update.CallbackQuery.Message.MessageID, fmt.Sprintf("ошибка при удалении игрока: %v", err))
 	}
 
+	b.Logger.LogSuccess("Player force checked out", targetPlayerInfo, fmt.Sprintf("Player force checked out from tournament by admin %s", adminInfo.Username))
+
 	if err := db.DecrementTimesPlayed(int64(playerID)); err != nil {
 		log.Printf("failed to decrement times played for user %d: %v", playerID, err)
+		b.Logger.LogError("Times played decrement failed", adminInfo, fmt.Sprintf("Failed to decrement times played for player %s", player.SavedName), err)
 	}
 
 	if wasInTournament {
 		if err := maingroup.PromoteQueuedPlayer(b, ctx); err != nil {
 			log.Printf("failed to promote queued player: %v", err)
+			b.Logger.LogError("Queue promotion failed", adminInfo, "Failed to promote queued player after force checkout", err)
 		}
 	}
 
 	if err := maingroup.UpdateAnnouncementMessage(b, b.GetMainGroupID()); err != nil {
 		log.Printf("failed to update announcement message: %v", err)
+		b.Logger.LogError("Announcement update failed", adminInfo, "Failed to update tournament announcement after force checkout", err)
 	}
 
 	return b.EditMessage(update.CallbackQuery.Message.Chat.ID, update.CallbackQuery.Message.MessageID, fmt.Sprintf("✅ игрок %s удалён из турнира", player.SavedName))

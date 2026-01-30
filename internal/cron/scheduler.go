@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/sukalov/mshkbot/internal/bot"
+	"github.com/sukalov/mshkbot/internal/logger"
 )
 
 type Scheduler struct {
@@ -132,6 +133,11 @@ func (s *Scheduler) scheduledTournamentStart(limit int, lichessRatingLimit int, 
 
 	if err := s.bot.Tournament.CreateTournament(ctx, limit, lichessRatingLimit, chesscomRatingLimit, announcementIntro); err != nil {
 		log.Printf("failed to create tournament: %v", err)
+		s.bot.Logger.LogError("Scheduled Tournament Start", &logger.UserInfo{
+			ID:       0,
+			ChatID:   s.mainGroupID,
+			ChatType: "system",
+		}, "Failed to create tournament", err)
 		return
 	}
 
@@ -140,6 +146,11 @@ func (s *Scheduler) scheduledTournamentStart(limit int, lichessRatingLimit int, 
 	messageID, err := s.bot.SendMessageAndGetID(s.mainGroupID, announcementMessage)
 	if err != nil {
 		log.Printf("failed to send message: %v", err)
+		s.bot.Logger.LogError("Scheduled Tournament Start", &logger.UserInfo{
+			ID:       0,
+			ChatID:   s.mainGroupID,
+			ChatType: "system",
+		}, "Failed to send announcement", err)
 		return
 	}
 
@@ -151,6 +162,12 @@ func (s *Scheduler) scheduledTournamentStart(limit int, lichessRatingLimit int, 
 		log.Printf("failed to pin message: %v", err)
 	}
 
+	s.bot.Logger.LogSuccess("Scheduled Tournament Start", &logger.UserInfo{
+		ID:       0,
+		ChatID:   s.mainGroupID,
+		ChatType: "system",
+	}, fmt.Sprintf("Tournament started: limit=%d, lichess<%d, chesscom<%d", limit, lichessRatingLimit, chesscomRatingLimit))
+
 	log.Printf("tournament started: limit=%d, lichess_limit=%d, chesscom_limit=%d, intro=%s", limit, lichessRatingLimit, chesscomRatingLimit, announcementIntro)
 }
 
@@ -159,8 +176,15 @@ func (s *Scheduler) scheduledTournamentEnd() {
 
 	if !s.bot.Tournament.Metadata.Exists {
 		log.Printf("no tournament to end")
+		s.bot.Logger.LogInfo("Scheduled Tournament End", &logger.UserInfo{
+			ID:       0,
+			ChatID:   s.mainGroupID,
+			ChatType: "system",
+		}, "No tournament to end")
 		return
 	}
+
+	playerCount := len(s.bot.Tournament.List)
 
 	announcementMessageID := s.bot.Tournament.Metadata.AnnouncementMessageID
 	if announcementMessageID != 0 {
@@ -171,8 +195,19 @@ func (s *Scheduler) scheduledTournamentEnd() {
 
 	if err := s.bot.Tournament.RemoveTournament(ctx); err != nil {
 		log.Printf("failed to remove tournament: %v", err)
+		s.bot.Logger.LogError("Scheduled Tournament End", &logger.UserInfo{
+			ID:       0,
+			ChatID:   s.mainGroupID,
+			ChatType: "system",
+		}, "Failed to remove tournament", err)
 		return
 	}
+
+	s.bot.Logger.LogSuccess("Scheduled Tournament End", &logger.UserInfo{
+		ID:       0,
+		ChatID:   s.mainGroupID,
+		ChatType: "system",
+	}, fmt.Sprintf("Tournament ended. Total players: %d", playerCount))
 
 	log.Printf("tournament ended and removed")
 }

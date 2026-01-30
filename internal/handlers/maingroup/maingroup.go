@@ -9,6 +9,7 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/sukalov/mshkbot/internal/bot"
 	"github.com/sukalov/mshkbot/internal/db"
+	"github.com/sukalov/mshkbot/internal/logger"
 	"github.com/sukalov/mshkbot/internal/types"
 	"github.com/sukalov/mshkbot/internal/utils"
 )
@@ -35,22 +36,29 @@ func handleHelp(b *bot.Bot, update tgbotapi.Update) error {
 }
 
 func handleCheckIn(b *bot.Bot, update tgbotapi.Update) error {
+	userInfo := logger.ExtractUserInfoFromUpdate(&update, "main group")
+	b.Logger.LogInfo("Check-in initiated", userInfo, "User initiated check-in to tournament")
+
 	user, err := db.GetUser(update.Message.From.ID)
 	if err != nil {
 		if err.Error() == "user not found" {
+			b.Logger.LogInfo("Check-in failed - user not registered", userInfo, "User attempted check-in but is not registered")
 			return b.ReplyToMessage(update.Message.Chat.ID, update.Message.MessageID, "напишите мне в личку чтобы зарегистрироваться")
 		}
 		errorContext := utils.CreateErrorContext(&update, "get_user_for_checkin")
 		utils.LogError(errorContext, err, "failed to get user for checkin")
+		b.Logger.LogError("Check-in failed", userInfo, "Failed to get user data for check-in", err)
 		return b.SendMessage(update.Message.From.ID, utils.FormatUserErrorMessage(errorContext.TraceID, "ошибка при получении данных пользователя"))
 	}
 	if user.State != db.StateCompleted {
+		b.Logger.LogInfo("Check-in failed - registration incomplete", userInfo, "User attempted check-in but registration not completed")
 		return b.ReplyToMessage(update.Message.Chat.ID, update.Message.MessageID, "мы с вами в личке ещё не закончили регистрацию")
 	}
 
 	ctx := context.Background()
 
 	if !b.Tournament.Metadata.Exists {
+		b.Logger.LogInfo("Check-in failed - no tournament", userInfo, "User attempted check-in but no tournament exists")
 		return b.ReplyToMessage(update.Message.Chat.ID, update.Message.MessageID, utils.CheckinUnavailibleMessage())
 	}
 
@@ -68,13 +76,16 @@ func handleCheckIn(b *bot.Bot, update tgbotapi.Update) error {
 	if err != nil {
 		errorContext := utils.CreateErrorContext(&update, "get_user_for_checkin_complete")
 		utils.LogError(errorContext, err, "failed to get full user data")
+		b.Logger.LogError("Check-in failed", userInfo, "Failed to get full user data for check-in", err)
 		return b.ReplyToMessage(update.Message.Chat.ID, update.Message.MessageID, utils.FormatUserErrorMessage(errorContext.TraceID, "ошибка при получении данных пользователя"))
 	}
 
 	if existingPlayer != nil {
 		if existingPlayer.State == types.StateCheckedOut {
+			b.Logger.LogInfo("Check-in failed - already checked out", userInfo, "User attempted check-in but already checked out")
 			return b.ReplyToMessage(update.Message.Chat.ID, update.Message.MessageID, "вы уже вышли, теперь придётся подождать")
 		}
+		b.Logger.LogInfo("Check-in failed - already checked in", userInfo, "User attempted check-in but already in tournament")
 		return b.ReplyToMessage(update.Message.Chat.ID, update.Message.MessageID, utils.AlreadyCheckedInMessage())
 	}
 
@@ -84,6 +95,7 @@ func handleCheckIn(b *bot.Bot, update tgbotapi.Update) error {
 
 	if isGreenTournament {
 		if fullUser.NotGreenUntil != nil && time.Now().Before(*fullUser.NotGreenUntil) {
+			b.Logger.LogInfo("Check-in failed - suspended from green tournaments", userInfo, "User attempted check-in to green tournament but is suspended")
 			return b.ReplyToMessage(update.Message.Chat.ID, update.Message.MessageID, "вам нельзя в этом турнире играть")
 		}
 	}
@@ -95,6 +107,7 @@ func handleCheckIn(b *bot.Bot, update tgbotapi.Update) error {
 		lichessPeakRatings, err := utils.GetLichessAllTimeHigh(*fullUser.Lichess)
 		if err != nil {
 			log.Printf("failed to get lichess peak ratings for user %d: %v", userID, err)
+			b.Logger.LogError("Rating fetch failed", userInfo, fmt.Sprintf("Failed to get lichess peak ratings for: %s", *fullUser.Lichess), err)
 		} else {
 			lichessRatingLimit := b.Tournament.Metadata.LichessRatingLimit
 			if lichessRatingLimit != 0 {
@@ -103,7 +116,9 @@ func handleCheckIn(b *bot.Bot, update tgbotapi.Update) error {
 					lichessPeakRatings.Classical >= lichessRatingLimit {
 					if fullUser.AllowToGreen {
 						manualAllowUsed = true
+						b.Logger.LogInfo("Manual allow used for green tournament", userInfo, "User exceeded rating limit but has manual allow")
 					} else {
+						b.Logger.LogInfo("Check-in failed - rating limit exceeded (lichess)", userInfo, fmt.Sprintf("Lichess rating %d exceeds limit %d", lichessPeakRatings.Blitz, lichessRatingLimit))
 						return b.ReplyToMessage(update.Message.Chat.ID, update.Message.MessageID, "ваш пиковый рейтинг на личесе превышает лимит турнира")
 					}
 				}
@@ -120,6 +135,7 @@ func handleCheckIn(b *bot.Bot, update tgbotapi.Update) error {
 		chesscomPeakRatings, err := utils.GetChessComAllTimeHigh(*fullUser.ChessCom)
 		if err != nil {
 			log.Printf("failed to get chesscom peak ratings for user %d: %v", userID, err)
+			b.Logger.LogError("Rating fetch failed", userInfo, fmt.Sprintf("Failed to get chess.com peak ratings for: %s", *fullUser.ChessCom), err)
 		} else {
 			chesscomRatingLimit := b.Tournament.Metadata.ChesscomRatingLimit
 			if chesscomRatingLimit != 0 {
@@ -128,7 +144,9 @@ func handleCheckIn(b *bot.Bot, update tgbotapi.Update) error {
 					chesscomPeakRatings.Classical >= chesscomRatingLimit {
 					if fullUser.AllowToGreen {
 						manualAllowUsed = true
+						b.Logger.LogInfo("Manual allow used for green tournament", userInfo, "User exceeded rating limit but has manual allow")
 					} else {
+						b.Logger.LogInfo("Check-in failed - rating limit exceeded (chess.com)", userInfo, fmt.Sprintf("Chess.com rating %d exceeds limit %d", chesscomPeakRatings.Blitz, chesscomRatingLimit))
 						return b.ReplyToMessage(update.Message.Chat.ID, update.Message.MessageID, "ваш пиковый рейтинг на чесскоме превышает лимит турнира")
 					}
 				}
@@ -166,12 +184,20 @@ func handleCheckIn(b *bot.Bot, update tgbotapi.Update) error {
 	b.Tournament.AddPlayer(ctx, newPlayer)
 	log.Printf("user %d (%s) checked in to tournament", userID, fullUser.Username)
 
+	if state == types.StateQueued {
+		b.Logger.LogSuccess("User checked in (queued)", userInfo, fmt.Sprintf("User %s checked in to tournament (queued, position: %d)", fullUser.SavedName, activePlayers+1))
+	} else {
+		b.Logger.LogSuccess("User checked in", userInfo, fmt.Sprintf("User %s checked in to tournament (active player)", fullUser.SavedName))
+	}
+
 	if err := db.IncrementTimesPlayed(update.Message.From.ID); err != nil {
 		log.Printf("failed to increment times played for user %d: %v", userID, err)
+		b.Logger.LogError("Times played increment failed", userInfo, "Failed to increment times played counter", err)
 	}
 
 	if err := UpdateAnnouncementMessage(b, update.Message.Chat.ID); err != nil {
 		log.Printf("failed to update announcement message: %v", err)
+		b.Logger.LogError("Announcement update failed", userInfo, "Failed to update tournament announcement message", err)
 	}
 
 	if state == types.StateQueued {
@@ -182,8 +208,11 @@ func handleCheckIn(b *bot.Bot, update tgbotapi.Update) error {
 
 func handleCheckOut(b *bot.Bot, update tgbotapi.Update) error {
 	ctx := context.Background()
+	userInfo := logger.ExtractUserInfoFromUpdate(&update, "main group")
+	b.Logger.LogInfo("Check-out initiated", userInfo, "User initiated check-out from tournament")
 
 	if !b.Tournament.Metadata.Exists {
+		b.Logger.LogInfo("Check-out failed - no tournament", userInfo, "User attempted check-out but no tournament exists")
 		return b.ReplyToMessage(update.Message.Chat.ID, update.Message.MessageID, utils.NoTournamentMessage())
 	}
 
@@ -198,10 +227,12 @@ func handleCheckOut(b *bot.Bot, update tgbotapi.Update) error {
 	}
 
 	if currentPlayer == nil {
+		b.Logger.LogInfo("Check-out failed - not registered", userInfo, "User attempted check-out but not registered in tournament")
 		return b.ReplyToMessage(update.Message.Chat.ID, update.Message.MessageID, "вы не записаны на турнир")
 	}
 
 	if currentPlayer.State == types.StateCheckedOut {
+		b.Logger.LogInfo("Check-out failed - already checked out", userInfo, "User attempted check-out but already checked out")
 		return b.ReplyToMessage(update.Message.Chat.ID, update.Message.MessageID, "вы уже отписались")
 	}
 
@@ -214,23 +245,28 @@ func handleCheckOut(b *bot.Bot, update tgbotapi.Update) error {
 	if err := b.Tournament.EditPlayer(ctx, userID, updatedPlayer); err != nil {
 		errorContext := utils.CreateErrorContext(&update, "checkout_player")
 		utils.LogError(errorContext, err, "failed to check out player")
+		b.Logger.LogError("Check-out failed", userInfo, "Failed to update player state to checked out", err)
 		return b.ReplyToMessage(update.Message.Chat.ID, update.Message.MessageID, utils.FormatUserErrorMessage(errorContext.TraceID, "ошибка при отписке"))
 	}
 
 	log.Printf("user %d checked out from tournament", userID)
+	b.Logger.LogSuccess("User checked out", userInfo, fmt.Sprintf("User %s checked out from tournament", currentPlayer.SavedName))
 
 	if err := db.DecrementTimesPlayed(update.Message.From.ID); err != nil {
 		log.Printf("failed to decrement times played for user %d: %v", userID, err)
+		b.Logger.LogError("Times played decrement failed", userInfo, "Failed to decrement times played counter", err)
 	}
 
 	if wasInTournament {
 		if err := PromoteQueuedPlayer(b, ctx); err != nil {
 			log.Printf("failed to promote queued player: %v", err)
+			b.Logger.LogError("Queue promotion failed", userInfo, "Failed to promote queued player after check-out", err)
 		}
 	}
 
 	if err := UpdateAnnouncementMessage(b, update.Message.Chat.ID); err != nil {
 		log.Printf("failed to update announcement message: %v", err)
+		b.Logger.LogError("Announcement update failed", userInfo, "Failed to update tournament announcement message", err)
 	}
 
 	go schedulePlayerCleanup(b, userID, 15*time.Minute)
@@ -321,6 +357,16 @@ func PromoteQueuedPlayer(b *bot.Bot, ctx context.Context) error {
 	}
 
 	log.Printf("promoted player %d (%s) from queue to tournament", firstQueuedPlayer.ID, firstQueuedPlayer.Username)
+
+	// Create a user info for the promoted player for logging
+	promotedUserInfo := &logger.UserInfo{
+		ID:        int64(firstQueuedPlayer.ID),
+		Username:  firstQueuedPlayer.Username,
+		FirstName: firstQueuedPlayer.SavedName,
+		ChatType:  "main group",
+	}
+	b.Logger.LogSuccess("Player promoted from queue", promotedUserInfo, fmt.Sprintf("Player %s promoted from queue to tournament", firstQueuedPlayer.SavedName))
+
 	return nil
 }
 

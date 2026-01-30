@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/sukalov/mshkbot/internal/logger"
 	"github.com/sukalov/mshkbot/internal/tournament"
 	"github.com/sukalov/mshkbot/internal/utils"
 )
@@ -38,10 +39,11 @@ type Bot struct {
 	adminMu        sync.RWMutex
 	Tournament     *tournament.TournamentManager
 	adminProcesses *AdminProcessStore
+	Logger         *logger.Logger
 }
 
 // creates a new bot instance
-func New(name, token string, mainGroupID, adminGroupID int64) (*Bot, error) {
+func New(name, token string, mainGroupID, adminGroupID int64, loggerChannelID int64) (*Bot, error) {
 	botClient, err := tgbotapi.NewBotAPI(token)
 	if err != nil {
 		return nil, err
@@ -61,6 +63,7 @@ func New(name, token string, mainGroupID, adminGroupID int64) (*Bot, error) {
 		adminUserIDs:   make(map[int64]bool),
 		Tournament:     &tournament.TournamentManager{},
 		adminProcesses: NewAdminProcessStore(),
+		Logger:         logger.New(botClient, loggerChannelID),
 	}, nil
 }
 
@@ -181,28 +184,36 @@ func (b *Bot) routeUpdate(
 	}
 
 	log.Printf("[%s] routing to %s handler", b.name, chatType)
-	b.processUpdate(update, handlers)
+	b.processUpdate(update, handlers, chatType)
 }
 
 // handles incoming updates with provided handler set
-func (b *Bot) processUpdate(update tgbotapi.Update, handlers HandlerSet) error {
+func (b *Bot) processUpdate(update tgbotapi.Update, handlers HandlerSet, chatType string) error {
 	// handle command updates
 	if update.Message != nil && update.Message.IsCommand() && update.Message.ForwardDate == 0 {
 		command := update.Message.Command()
+		userInfo := logger.ExtractUserInfoFromUpdate(&update, chatType)
+
 		if handler, exists := handlers.Commands[command]; exists {
 			if err := handler(b, update); err != nil {
 				errorContext := utils.CreateErrorContext(&update, "command_execution")
 				utils.LogError(errorContext, err, "command execution failed")
+				b.Logger.LogError(fmt.Sprintf("Command: /%s", command), userInfo, "Command execution failed", err)
 				return b.SendMessage(update.Message.From.ID, utils.FormatCommandError(command, errorContext.TraceID))
 			}
+			b.Logger.LogSuccess(fmt.Sprintf("Command: /%s", command), userInfo, "Command executed successfully")
 			return nil
 		}
+		// Unknown command - log as info
+		b.Logger.LogInfo(fmt.Sprintf("Unknown Command: /%s", command), userInfo, "User sent unknown command")
 		return b.SendMessage(update.Message.From.ID, fmt.Sprintf("неизвестная команда: /%s", command))
 	}
 
 	// handle callback queries
 	if update.CallbackQuery != nil {
 		data := update.CallbackQuery.Data
+		userInfo := logger.ExtractUserInfoFromUpdate(&update, chatType)
+
 		// extract callback query identifier (before first colon if exists)
 		query := data
 		for i, c := range data {
@@ -216,8 +227,10 @@ func (b *Bot) processUpdate(update tgbotapi.Update, handlers HandlerSet) error {
 			if err := handler(b, update); err != nil {
 				errorContext := utils.CreateErrorContext(&update, "callback_execution")
 				utils.LogError(errorContext, err, "callback execution failed")
+				b.Logger.LogError(fmt.Sprintf("Callback: %s", query), userInfo, "Callback execution failed", err)
 				return b.SendMessage(update.Message.From.ID, utils.FormatUserErrorMessage(errorContext.TraceID, "ошибка"))
 			}
+			b.Logger.LogSuccess(fmt.Sprintf("Callback: %s", query), userInfo, "Callback executed successfully")
 			return nil
 		}
 

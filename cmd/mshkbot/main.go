@@ -23,6 +23,7 @@ func main() {
 		"BOT_TOKEN",
 		"MAIN_GROUP_ID",
 		"ADMIN_GROUP_ID",
+		"LOGGER_CHANNEL_ID",
 	})
 	if err != nil {
 		log.Fatalf("failed to load env: %v", err)
@@ -39,8 +40,13 @@ func main() {
 		log.Fatalf("invalid ADMIN_GROUP_ID: %v", err)
 	}
 
+	loggerChannelID, err := strconv.ParseInt(env["LOGGER_CHANNEL_ID"], 10, 64)
+	if err != nil {
+		log.Fatalf("invalid LOGGER_CHANNEL_ID: %v", err)
+	}
+
 	// create bot instance
-	botInstance, err := bot.New("mshkbot", env["BOT_TOKEN"], mainGroupID, adminGroupID)
+	botInstance, err := bot.New("mshkbot", env["BOT_TOKEN"], mainGroupID, adminGroupID, loggerChannelID)
 	if err != nil {
 		log.Fatalf("failed to create bot: %v", err)
 	}
