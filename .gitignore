@@ -2,3 +2,4 @@
 tmp
 .trunk
 AGENTS.md
+.env.production

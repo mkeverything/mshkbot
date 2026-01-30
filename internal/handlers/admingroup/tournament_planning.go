@@ -1079,3 +1079,256 @@ func handleEditTournamentInput(b *bot.Bot, update tgbotapi.Update) error {
 
 	return b.SendMessage(update.Message.Chat.ID, "✅ изменения сохранены")
 }
+
+// handleDebugTournaments shows all tournaments with detailed debug info
+func handleDebugTournaments(b *bot.Bot, update tgbotapi.Update) error {
+	adminInfo := logger.ExtractUserInfoFromUpdate(&update, "admin group")
+	b.Logger.LogInfo("Debug tournaments requested", adminInfo, "Admin requested debug tournament list")
+
+	ctx := context.Background()
+	tournaments, err := redis.GetPlannedTournaments(ctx)
+	if err != nil {
+		b.Logger.LogError("Failed to get planned tournaments", adminInfo, "Failed to retrieve planned tournaments", err)
+		return b.SendMessage(update.Message.Chat.ID, fmt.Sprintf("ошибка при получении списка: %v", err))
+	}
+
+	if len(tournaments) == 0 {
+		return b.SendMessage(update.Message.Chat.ID, "🔍 отладка: запланированные турниры\n\nв redis нет турниров")
+	}
+
+	message := "🔍 отладка: все запланированные турниры\n\n"
+
+	for i, t := range tournaments {
+		statusIcon := "⚪"
+		switch t.Status {
+		case types.StatusActive:
+			statusIcon = "🟢"
+		case types.StatusPlanned:
+			statusIcon = "🟡"
+		case types.StatusCompleted:
+			statusIcon = "✅"
+		case types.StatusCancelled:
+			statusIcon = "❌"
+		default:
+			statusIcon = "⚠️"
+		}
+
+		name := t.Name
+		if name == "" {
+			name = "(без названия)"
+		}
+
+		// Convert to Moscow time for display
+		moscowTZ := time.FixedZone("moscow", 3*60*60)
+		startTime := t.StartTime.In(moscowTZ)
+		endTime := t.EndTime.In(moscowTZ)
+
+		message += fmt.Sprintf("%d. %s %s\n", i+1, statusIcon, name)
+		message += fmt.Sprintf("   🆔 id: %s\n", t.ID)
+		message += fmt.Sprintf("   📊 статус: %q\n", t.Status)
+		message += fmt.Sprintf("   📅 %s %02d:%02d - %02d:%02d\n",
+			startTime.Format("2006-01-02"),
+			startTime.Hour(), startTime.Minute(),
+			endTime.Hour(), endTime.Minute())
+		message += fmt.Sprintf("   👥 лимит: %d", t.Limit)
+		if t.LichessLimit > 0 || t.ChesscomLimit > 0 {
+			message += fmt.Sprintf(" | lichess<%d, chesscom<%d", t.LichessLimit, t.ChesscomLimit)
+		}
+		message += "\n\n"
+	}
+
+	message += fmt.Sprintf("всего турниров в redis: %d", len(tournaments))
+
+	return b.SendMessage(update.Message.Chat.ID, message)
+}
+
+// handleCleanupTournaments shows stuck tournaments and allows cleanup
+func handleCleanupTournaments(b *bot.Bot, update tgbotapi.Update) error {
+	adminInfo := logger.ExtractUserInfoFromUpdate(&update, "admin group")
+	b.Logger.LogInfo("Cleanup tournaments initiated", adminInfo, "Admin initiated tournament cleanup")
+
+	ctx := context.Background()
+	tournaments, err := redis.GetPlannedTournaments(ctx)
+	if err != nil {
+		b.Logger.LogError("Failed to get planned tournaments", adminInfo, "Failed to retrieve planned tournaments", err)
+		return b.SendMessage(update.Message.Chat.ID, fmt.Sprintf("ошибка при получении списка: %v", err))
+	}
+
+	// Find stuck tournaments (active but no active tournament in memory, or invalid status)
+	var stuck []types.PlannedTournament
+	for _, t := range tournaments {
+		// Tournament is stuck if:
+		// 1. Status is "active" but no tournament is currently running
+		// 2. Status is empty or invalid
+		// 3. Status is not one of the known statuses
+		isStuck := false
+		if t.Status == types.StatusActive && !b.Tournament.Metadata.Exists {
+			isStuck = true
+		} else if t.Status != types.StatusPlanned &&
+			t.Status != types.StatusActive &&
+			t.Status != types.StatusCompleted &&
+			t.Status != types.StatusCancelled {
+			isStuck = true
+		}
+
+		if isStuck {
+			stuck = append(stuck, t)
+		}
+	}
+
+	if len(stuck) == 0 {
+		return b.SendMessage(update.Message.Chat.ID, "🧹 очистка турниров\n\nзастрявших турниров не найдено. все турниры имеют корректный статус.")
+	}
+
+	// Build keyboard with stuck tournament buttons
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for _, t := range stuck {
+		name := t.Name
+		if name == "" {
+			name = "(без названия)"
+		}
+		moscowTZ := time.FixedZone("moscow", 3*60*60)
+		startTime := t.StartTime.In(moscowTZ)
+		label := fmt.Sprintf("%s (%s) - %s %02d:%02d", name, t.Status, startTime.Format("2006-01-02"), startTime.Hour(), startTime.Minute())
+		btn := tgbotapi.NewInlineKeyboardButtonData(label, fmt.Sprintf("cleanup_tournament:%s", t.ID))
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(btn))
+	}
+
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("отмена", "cleanup_tournament:cancel"),
+	))
+
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(rows...)
+	msg := tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("🧹 найдено %d застрявших турниров:\n\nвыберите турнир для удаления или установки статуса 'завершён':", len(stuck)))
+	msg.ReplyMarkup = keyboard
+
+	_, err = b.Client.Send(msg)
+	return err
+}
+
+// handleCleanupTournamentCallback handles the cleanup tournament callback
+func handleCleanupTournamentCallback(b *bot.Bot, update tgbotapi.Update) error {
+	adminInfo := logger.ExtractUserInfoFromUpdate(&update, "admin group")
+
+	callback := tgbotapi.NewCallback(update.CallbackQuery.ID, "")
+	if _, err := b.Request(callback); err != nil {
+		log.Printf("failed to answer callback: %v", err)
+	}
+
+	chatID := update.CallbackQuery.Message.Chat.ID
+	messageID := update.CallbackQuery.Message.MessageID
+	data := update.CallbackQuery.Data
+
+	parts := strings.Split(data, ":")
+	if len(parts) < 2 {
+		return fmt.Errorf("invalid callback data: %s", data)
+	}
+
+	action := parts[1]
+
+	if action == "cancel" {
+		b.Logger.LogInfo("Cleanup tournament cancelled", adminInfo, "Admin cancelled tournament cleanup")
+		return b.EditMessage(chatID, messageID, "очистка турниров отменена")
+	}
+
+	// Get tournament ID
+	tournamentID := action
+
+	ctx := context.Background()
+	tournament, err := redis.GetPlannedTournamentByID(ctx, tournamentID)
+	if err != nil {
+		b.Logger.LogError("Cleanup tournament failed", adminInfo, "Failed to get tournament", err)
+		return b.EditMessage(chatID, messageID, fmt.Sprintf("ошибка: турнир не найден: %v", err))
+	}
+
+	// Show options: mark as completed or delete
+	keyboard := tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("✅ отметить как завершённый", fmt.Sprintf("cleanup_action:%s:complete", tournamentID)),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🗑 удалить полностью", fmt.Sprintf("cleanup_action:%s:delete", tournamentID)),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("отмена", "cleanup_tournament:cancel"),
+		),
+	)
+
+	name := tournament.Name
+	if name == "" {
+		name = "(без названия)"
+	}
+
+	return b.EditMessageWithButtons(chatID, messageID,
+		fmt.Sprintf("🧹 очистка турнира\n\n%s\nтекущий статус: %q\n\nвыберите действие:", name, tournament.Status),
+		keyboard)
+}
+
+// handleCleanupActionCallback handles the cleanup action (complete or delete)
+func handleCleanupActionCallback(b *bot.Bot, update tgbotapi.Update) error {
+	adminInfo := logger.ExtractUserInfoFromUpdate(&update, "admin group")
+
+	callback := tgbotapi.NewCallback(update.CallbackQuery.ID, "")
+	if _, err := b.Request(callback); err != nil {
+		log.Printf("failed to answer callback: %v", err)
+	}
+
+	chatID := update.CallbackQuery.Message.Chat.ID
+	messageID := update.CallbackQuery.Message.MessageID
+	data := update.CallbackQuery.Data
+
+	parts := strings.Split(data, ":")
+	if len(parts) < 3 {
+		return fmt.Errorf("invalid callback data: %s", data)
+	}
+
+	tournamentID := parts[1]
+	action := parts[2]
+
+	ctx := context.Background()
+
+	if action == "complete" {
+		tournament, err := redis.GetPlannedTournamentByID(ctx, tournamentID)
+		if err != nil {
+			b.Logger.LogError("Cleanup tournament failed", adminInfo, "Failed to get tournament", err)
+			return b.EditMessage(chatID, messageID, fmt.Sprintf("ошибка: турнир не найден: %v", err))
+		}
+
+		tournament.Status = types.StatusCompleted
+		if err := redis.SavePlannedTournament(ctx, *tournament); err != nil {
+			b.Logger.LogError("Cleanup tournament failed", adminInfo, "Failed to update tournament status", err)
+			return b.EditMessage(chatID, messageID, fmt.Sprintf("ошибка при обновлении статуса: %v", err))
+		}
+
+		name := tournament.Name
+		if name == "" {
+			name = "(без названия)"
+		}
+
+		b.Logger.LogSuccess("Tournament cleaned up", adminInfo, fmt.Sprintf("Tournament %s marked as completed", name))
+		return b.EditMessage(chatID, messageID, fmt.Sprintf("✅ турнир '%s' отмечен как завершённый", name))
+	}
+
+	if action == "delete" {
+		tournament, err := redis.GetPlannedTournamentByID(ctx, tournamentID)
+		if err != nil {
+			b.Logger.LogError("Cleanup tournament failed", adminInfo, "Failed to get tournament", err)
+			return b.EditMessage(chatID, messageID, fmt.Sprintf("ошибка: турнир не найден: %v", err))
+		}
+
+		if err := redis.DeletePlannedTournament(ctx, tournamentID); err != nil {
+			b.Logger.LogError("Cleanup tournament failed", adminInfo, "Failed to delete tournament", err)
+			return b.EditMessage(chatID, messageID, fmt.Sprintf("ошибка при удалении турнира: %v", err))
+		}
+
+		name := tournament.Name
+		if name == "" {
+			name = "(без названия)"
+		}
+
+		b.Logger.LogSuccess("Tournament deleted", adminInfo, fmt.Sprintf("Tournament %s deleted", name))
+		return b.EditMessage(chatID, messageID, fmt.Sprintf("🗑 турнир '%s' удалён", name))
+	}
+
+	return nil
+}

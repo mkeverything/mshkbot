@@ -15,6 +15,7 @@ import (
 	"github.com/sukalov/mshkbot/internal/db"
 	"github.com/sukalov/mshkbot/internal/handlers/maingroup"
 	"github.com/sukalov/mshkbot/internal/logger"
+	"github.com/sukalov/mshkbot/internal/redis"
 	"github.com/sukalov/mshkbot/internal/types"
 	"github.com/sukalov/mshkbot/internal/utils"
 )
@@ -35,6 +36,8 @@ func GetHandlers(s *cron.Scheduler) bot.HandlerSet {
 			"start_tournament":     handleStartTournament,
 			"cancel_tournament":    handleCancelTournament,
 			"edit_tournament":      handleEditTournament,
+			"debug_tournaments":    handleDebugTournaments,
+			"cleanup_tournaments":  handleCleanupTournaments,
 			"suspend_from_green":   handleSuspendFromGreen,
 			"ban_player":           handleBanPlayer,
 			"unban_player":         handleUnbanPlayer,
@@ -63,12 +66,14 @@ func GetHandlers(s *cron.Scheduler) bot.HandlerSet {
 			"edit_tournament":        handleEditTournamentCallback,
 			"edit_tournament_select": handleEditTournamentCallback,
 			"edit_tournament_field":  handleEditTournamentCallback,
+			"cleanup_tournament":     handleCleanupTournamentCallback,
+			"cleanup_action":         handleCleanupActionCallback,
 		},
 	}
 }
 
 func handleHelp(b *bot.Bot, update tgbotapi.Update) error {
-	return b.SendMessage(update.Message.Chat.ID, "команды администратора:\n\n/tournament - показать состояние текущего турнира\n\n/plan_tournament - запланировать новый турнир с расписанием\n\n/planned_tournaments - список всех запланированных турниров\n\n/start_tournament - немедленно запустить запланированный турнир\n\n/cancel_tournament - отменить запланированный турнир\n\n/edit_tournament - изменить запланированный турнир\n\n/stop_tournament - остановить текущий турнир\n\n/send_schedule - показать расписание на неделю\n\n/suspend_from_green - отстранить пользователя от зелёных турниров\n\n/admit_to_green - допустить пользователя к зелёным турнирам\n\n/allow_to_green - разрешить пользователю участие в зелёном турнире вручную\n\n/force_checkout - принудительно выписать пользователя из турнира\n\n/ban_player - забанить пользователя\n\n/unban_player - разбанить пользователя")
+	return b.SendMessage(update.Message.Chat.ID, "команды администратора:\n\n/tournament - показать состояние текущего турнира\n\n/plan_tournament - запланировать новый турнир с расписанием\n\n/planned_tournaments - список всех запланированных турниров\n\n/start_tournament - немедленно запустить запланированный турнир\n\n/cancel_tournament - отменить запланированный турнир\n\n/edit_tournament - изменить запланированный турнир\n\n/stop_tournament - остановить текущий турнир\n\n/debug_tournaments - отладка: показать все турниры в redis\n\n/cleanup_tournaments - очистка: найти и исправить застрявшие турниры\n\n/send_schedule - показать расписание на неделю\n\n/suspend_from_green - отстранить пользователя от зелёных турниров\n\n/admit_to_green - допустить пользователя к зелёным турнирам\n\n/allow_to_green - разрешить пользователю участие в зелёном турнире вручную\n\n/force_checkout - принудительно выписать пользователя из турнира\n\n/ban_player - забанить пользователя\n\n/unban_player - разбанить пользователя")
 }
 
 func handleTournamentJSON(b *bot.Bot, update tgbotapi.Update) error {
@@ -283,6 +288,25 @@ func handleStopTournamentCallback(b *bot.Bot, update tgbotapi.Update) error {
 				b.Logger.LogError("Tournament stop - unpin failed", adminInfo, "Failed to unpin announcement message", err)
 			}
 		}
+
+		// Find and update the active planned tournament to completed status
+		tournaments, err := redis.GetPlannedTournaments(ctx)
+		if err != nil {
+			b.Logger.LogError("Tournament stop failed", adminInfo, "Failed to get planned tournaments", err)
+		} else {
+			for i, t := range tournaments {
+				if t.Status == types.StatusActive {
+					tournaments[i].Status = types.StatusCompleted
+					if saveErr := redis.SavePlannedTournament(ctx, tournaments[i]); saveErr != nil {
+						b.Logger.LogError("Tournament stop failed", adminInfo, "Failed to update planned tournament status", saveErr)
+					} else {
+						b.Logger.LogInfo("Tournament status updated", adminInfo, fmt.Sprintf("Planned tournament %s marked as completed", t.ID))
+					}
+					break
+				}
+			}
+		}
+
 		if err := b.Tournament.RemoveTournament(ctx); err != nil {
 			b.Logger.LogError("Tournament stop failed", adminInfo, "Failed to remove tournament", err)
 			return b.EditMessage(chatID, messageID, fmt.Sprintf("ошибка при остановке турнира: %v", err))

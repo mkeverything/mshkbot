@@ -29,6 +29,12 @@ docker-push:
 dev:
 	air
 
+# sync environment file to remote server
+.PHONY: sync-env
+sync-env:
+	@test -f .env.production || (echo "error: .env.production not found" && exit 1)
+	scp .env.production root@${DEPLOY_HOST}:/root/mshk/.env
+
 # clean up old docker images
 .PHONY: docker-clean
 docker-clean:
@@ -40,7 +46,7 @@ docker-clean:
 
 # deployment command
 .PHONY: deploy
-deploy: build docker-build docker-push docker-clean
+deploy: build docker-build docker-push sync-env docker-clean
 	ssh root@${DEPLOY_HOST} "\
 		cd /root && \
 		docker pull sukalov/mshkbot:latest && \
