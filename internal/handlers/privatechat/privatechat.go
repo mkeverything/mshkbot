@@ -678,7 +678,7 @@ func buildTournamentListMessage(b *bot.Bot, messageIntro string) string {
 	if len(queuedPlayers) > 0 {
 		message += "\nочередь:\n"
 		for i, player := range queuedPlayers {
-			message += fmt.Sprintf("%d. %s &#9816;\n", i+1, player.SavedName)
+			message += fmt.Sprintf("%d. %s\n", i+1, player.SavedName)
 		}
 	}
 
