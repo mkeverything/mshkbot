@@ -119,7 +119,7 @@ func (tm *TournamentManager) AddPlayer(ctx context.Context, player types.Player)
 	return nil
 }
 
-func (tm *TournamentManager) CreateTournament(ctx context.Context, limit int, lichessRatingLimit int, chesscomRatingLimit int, announcementIntro string) error {
+func (tm *TournamentManager) CreateTournament(ctx context.Context, limit int, lichessRatingLimit int, chesscomRatingLimit int, announcementIntro string, plannedID string) error {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
 	if tm.Metadata.Exists {
@@ -131,6 +131,7 @@ func (tm *TournamentManager) CreateTournament(ctx context.Context, limit int, li
 		ChesscomRatingLimit: chesscomRatingLimit,
 		AnnouncementIntro:   announcementIntro,
 		Exists:              true,
+		PlannedID:           plannedID,
 	}
 	if err := redis.SetMetadata(ctx, tm.Metadata); err != nil {
 		utils.LogTournamentError("create_tournament", 0, err)
@@ -152,6 +153,7 @@ func (tm *TournamentManager) RemoveTournament(ctx context.Context) error {
 		AnnouncementMessageID: 0,
 		AnnouncementIntro:     "",
 		Exists:                false,
+		PlannedID:             "",
 	}
 	if err := tm.clearList(ctx); err != nil {
 		utils.LogTournamentError("clear_list", 0, err)

@@ -560,45 +560,13 @@ func handleStartTournamentCallback(b *bot.Bot, update tgbotapi.Update) error {
 		return b.EditMessage(chatID, messageID, "ошибка: турнир уже идёт")
 	}
 
-	// Start the tournament
-	if err := b.Tournament.CreateTournament(ctx, tournament.Limit, tournament.LichessLimit, tournament.ChesscomLimit, tournament.Intro); err != nil {
-		b.Logger.LogError("Start tournament failed", adminInfo, "Failed to create tournament", err)
-		return b.EditMessage(chatID, messageID, fmt.Sprintf("ошибка при создании турнира: %v", err))
-	}
-
-	// Send announcement to main group
-	announcementMessage := tournament.Intro + "\n\nучастники:\nпока никого нет"
-	mainGroupID := b.GetMainGroupID()
-	annMessageID, err := b.SendMessageAndGetID(mainGroupID, announcementMessage)
-	if err != nil {
-		b.Logger.LogError("Start tournament failed", adminInfo, "Failed to send announcement", err)
-		return b.EditMessage(chatID, messageID, fmt.Sprintf("ошибка при отправке объявления: %v", err))
-	}
-
-	// Store announcement message ID
-	if err := b.Tournament.SetAnnouncementMessageID(ctx, annMessageID); err != nil {
-		log.Printf("failed to store announcement message ID: %v", err)
-	}
-
-	// Pin the message
-	if err := b.PinMessage(mainGroupID, annMessageID); err != nil {
-		log.Printf("failed to pin message: %v", err)
-	}
-
-	// Update tournament status
-	tournament.Status = types.StatusActive
-	tournament.StartedAt = time.Now().UTC()
-	tournament.AnnouncementMsgID = annMessageID
-	if err := redis.SavePlannedTournament(ctx, *tournament); err != nil {
-		log.Printf("failed to update tournament status: %v", err)
-	}
-
 	name := tournament.Name
 	if name == "" {
 		name = "(без названия)"
 	}
 
-	b.Logger.LogSuccess("Tournament started", adminInfo, fmt.Sprintf("Tournament %s started manually", name))
+	// Start the tournament
+	scheduler.StartPlannedTournament(*tournament, adminInfo)
 
 	return b.EditMessage(chatID, messageID, fmt.Sprintf("✅ турнир '%s' запущен!\n\nтурнир автоматически завершится в запланированное время (%s). используйте /stop_tournament для немедленной остановки.",
 		name, tournament.EndTime.In(time.FixedZone("moscow", 3*60*60)).Format("15:04")))

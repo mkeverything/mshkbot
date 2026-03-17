@@ -39,6 +39,7 @@ type TournamentMetadata struct {
 	AnnouncementMessageID int    `json:"announcement_message_id"`
 	AnnouncementIntro     string `json:"announcement_intro"`
 	Exists                bool   `json:"exists"`
+	PlannedID             string `json:"planned_id,omitempty"`
 }
 
 type PlannedTournament struct {

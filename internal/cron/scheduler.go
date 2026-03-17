@@ -136,7 +136,7 @@ func (s *Scheduler) timeUntilNext(task scheduledTask) time.Duration {
 func (s *Scheduler) scheduledTournamentStart(limit int, lichessRatingLimit int, chesscomRatingLimit int, announcementIntro string) {
 	ctx := context.Background()
 
-	if err := s.bot.Tournament.CreateTournament(ctx, limit, lichessRatingLimit, chesscomRatingLimit, announcementIntro); err != nil {
+	if err := s.bot.Tournament.CreateTournament(ctx, limit, lichessRatingLimit, chesscomRatingLimit, announcementIntro, ""); err != nil {
 		log.Printf("failed to create tournament: %v", err)
 		s.bot.Logger.LogError("Scheduled Tournament Start", &logger.UserInfo{
 			ID:       0,
@@ -310,22 +310,30 @@ func (s *Scheduler) checkAndStartPlannedTournaments() {
 		}
 
 		// Start the tournament
-		s.startPlannedTournament(tournament)
+		s.StartPlannedTournament(tournament, nil)
 	}
 }
 
 // startPlannedTournament starts a planned tournament and schedules its end
-func (s *Scheduler) startPlannedTournament(tournament types.PlannedTournament) {
+// StartPlannedTournament starts a planned tournament and schedules its end.
+// If adminInfo is provided, it logs as the admin who started it manually.
+func (s *Scheduler) StartPlannedTournament(tournament types.PlannedTournament, adminInfo *logger.UserInfo) {
 	ctx := context.Background()
 
 	// Create tournament
-	if err := s.bot.Tournament.CreateTournament(ctx, tournament.Limit, tournament.LichessLimit, tournament.ChesscomLimit, tournament.Intro); err != nil {
+	if err := s.bot.Tournament.CreateTournament(ctx, tournament.Limit, tournament.LichessLimit, tournament.ChesscomLimit, tournament.Intro, tournament.ID); err != nil {
 		log.Printf("failed to create planned tournament %s: %v", tournament.ID, err)
-		s.bot.Logger.LogError("Planned Tournament Start", &logger.UserInfo{
+
+		logUserInfo := &logger.UserInfo{
 			ID:       0,
 			ChatID:   s.mainGroupID,
 			ChatType: "system",
-		}, fmt.Sprintf("Failed to create planned tournament %s", tournament.ID), err)
+		}
+		if adminInfo != nil {
+			logUserInfo = adminInfo
+		}
+
+		s.bot.Logger.LogError("Planned Tournament Start", logUserInfo, fmt.Sprintf("Failed to create planned tournament %s", tournament.ID), err)
 		return
 	}
 
@@ -334,11 +342,17 @@ func (s *Scheduler) startPlannedTournament(tournament types.PlannedTournament) {
 	messageID, err := s.bot.SendMessageAndGetID(s.mainGroupID, announcementMessage)
 	if err != nil {
 		log.Printf("failed to send announcement for planned tournament %s: %v", tournament.ID, err)
-		s.bot.Logger.LogError("Planned Tournament Start", &logger.UserInfo{
+
+		logUserInfo := &logger.UserInfo{
 			ID:       0,
 			ChatID:   s.mainGroupID,
 			ChatType: "system",
-		}, fmt.Sprintf("Failed to send announcement for planned tournament %s", tournament.ID), err)
+		}
+		if adminInfo != nil {
+			logUserInfo = adminInfo
+		}
+
+		s.bot.Logger.LogError("Planned Tournament Start", logUserInfo, fmt.Sprintf("Failed to send announcement for planned tournament %s", tournament.ID), err)
 		return
 	}
 
@@ -361,73 +375,98 @@ func (s *Scheduler) startPlannedTournament(tournament types.PlannedTournament) {
 	}
 
 	// Schedule auto-end
-	go s.schedulePlannedTournamentEnd(tournament)
+	go s.SchedulePlannedTournamentEnd(tournament)
 
-	s.bot.Logger.LogSuccess("Planned Tournament Started", &logger.UserInfo{
+	logUserInfo := &logger.UserInfo{
 		ID:       0,
 		ChatID:   s.mainGroupID,
 		ChatType: "system",
-	}, fmt.Sprintf("Planned tournament %s started: limit=%d, lichess<%d, chesscom<%d", tournament.Name, tournament.Limit, tournament.LichessLimit, tournament.ChesscomLimit))
+	}
+	logAction := "Planned Tournament Started"
+	if adminInfo != nil {
+		logUserInfo = adminInfo
+		logAction = "Tournament Started Manually"
+	}
+
+	s.bot.Logger.LogSuccess(logAction, logUserInfo, fmt.Sprintf("Planned tournament %s started: limit=%d, lichess<%d, chesscom<%d", tournament.Name, tournament.Limit, tournament.LichessLimit, tournament.ChesscomLimit))
 
 	log.Printf("planned tournament %s started: limit=%d, lichess_limit=%d, chesscom_limit=%d", tournament.ID, tournament.Limit, tournament.LichessLimit, tournament.ChesscomLimit)
 }
 
-// schedulePlannedTournamentEnd schedules the end of a planned tournament at its EndTime
-func (s *Scheduler) schedulePlannedTournamentEnd(tournament types.PlannedTournament) {
+// SchedulePlannedTournamentEnd schedules the end of a planned tournament at its EndTime
+func (s *Scheduler) SchedulePlannedTournamentEnd(tournament types.PlannedTournament) {
+	ctx := context.Background()
 	now := time.Now().UTC()
 	if tournament.EndTime.Before(now) || tournament.EndTime.Equal(now) {
 		// End time has already passed, end immediately
-		s.endPlannedTournament(tournament)
+		s.EndCurrentTournament(ctx, nil)
 		return
 	}
 
 	duration := tournament.EndTime.Sub(now)
 	time.AfterFunc(duration, func() {
-		s.endPlannedTournament(tournament)
+		s.EndCurrentTournament(ctx, nil)
 	})
 }
 
-// endPlannedTournament ends a planned tournament
-func (s *Scheduler) endPlannedTournament(tournament types.PlannedTournament) {
-	ctx := context.Background()
-
+// EndCurrentTournament ends the currently active tournament.
+// If it was a planned tournament, it marks it as completed in Redis.
+func (s *Scheduler) EndCurrentTournament(ctx context.Context, adminInfo *logger.UserInfo) error {
 	if !s.bot.Tournament.Metadata.Exists {
-		log.Printf("no active tournament to end for planned tournament %s", tournament.ID)
-		return
+		return fmt.Errorf("турнир не создан")
 	}
 
+	plannedID := s.bot.Tournament.Metadata.PlannedID
 	playerCount := len(s.bot.Tournament.List)
 
 	// Unpin announcement message
 	announcementMessageID := s.bot.Tournament.Metadata.AnnouncementMessageID
 	if announcementMessageID != 0 {
 		if err := s.bot.UnpinMessage(s.mainGroupID, announcementMessageID); err != nil {
-			log.Printf("failed to unpin message for planned tournament %s: %v", tournament.ID, err)
+			log.Printf("failed to unpin message: %v", err)
 		}
 	}
 
 	// Remove tournament
 	if err := s.bot.Tournament.RemoveTournament(ctx); err != nil {
-		log.Printf("failed to remove planned tournament %s: %v", tournament.ID, err)
-		s.bot.Logger.LogError("Planned Tournament End", &logger.UserInfo{
-			ID:       0,
-			ChatID:   s.mainGroupID,
-			ChatType: "system",
-		}, fmt.Sprintf("Failed to end planned tournament %s", tournament.ID), err)
-		return
+		return fmt.Errorf("failed to remove tournament: %w", err)
 	}
 
-	// Update tournament status
-	tournament.Status = types.StatusCompleted
-	if err := redis.SavePlannedTournament(ctx, tournament); err != nil {
-		log.Printf("failed to update planned tournament %s status to completed: %v", tournament.ID, err)
+	// Update planned tournament status if it exists
+	if plannedID != "" {
+		tournament, err := redis.GetPlannedTournamentByID(ctx, plannedID)
+		if err == nil {
+			tournament.Status = types.StatusCompleted
+			if err := redis.SavePlannedTournament(ctx, *tournament); err != nil {
+				log.Printf("failed to update planned tournament %s status to completed: %v", plannedID, err)
+			}
+		}
+	} else {
+		// Fallback for older tournaments or hardcoded ones that might be active
+		tournaments, err := redis.GetPlannedTournaments(ctx)
+		if err == nil {
+			for i, t := range tournaments {
+				if t.Status == types.StatusActive {
+					tournaments[i].Status = types.StatusCompleted
+					redis.SavePlannedTournament(ctx, tournaments[i])
+					break
+				}
+			}
+		}
 	}
 
-	s.bot.Logger.LogSuccess("Planned Tournament Ended", &logger.UserInfo{
+	logUserInfo := &logger.UserInfo{
 		ID:       0,
 		ChatID:   s.mainGroupID,
 		ChatType: "system",
-	}, fmt.Sprintf("Planned tournament %s ended. Total players: %d", tournament.Name, playerCount))
+	}
+	logAction := "Planned Tournament Ended"
+	if adminInfo != nil {
+		logUserInfo = adminInfo
+		logAction = "Tournament Stopped Manually"
+	}
 
-	log.Printf("planned tournament %s ended", tournament.ID)
+	s.bot.Logger.LogSuccess(logAction, logUserInfo, fmt.Sprintf("Tournament ended. Total players: %d", playerCount))
+
+	return nil
 }

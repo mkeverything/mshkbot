@@ -15,7 +15,6 @@ import (
 	"github.com/sukalov/mshkbot/internal/db"
 	"github.com/sukalov/mshkbot/internal/handlers/maingroup"
 	"github.com/sukalov/mshkbot/internal/logger"
-	"github.com/sukalov/mshkbot/internal/redis"
 	"github.com/sukalov/mshkbot/internal/types"
 	"github.com/sukalov/mshkbot/internal/utils"
 )
@@ -293,37 +292,9 @@ func handleStopTournamentCallback(b *bot.Bot, update tgbotapi.Update) error {
 
 	if action == "confirm" {
 		ctx := context.Background()
-		announcementMessageID := b.Tournament.Metadata.AnnouncementMessageID
-		if announcementMessageID != 0 {
-			if err := b.UnpinMessage(b.GetMainGroupID(), announcementMessageID); err != nil {
-				log.Printf("failed to unpin message: %v", err)
-				b.Logger.LogError("Tournament stop - unpin failed", adminInfo, "Failed to unpin announcement message", err)
-			}
-		}
-
-		// Find and update the active planned tournament to completed status
-		tournaments, err := redis.GetPlannedTournaments(ctx)
-		if err != nil {
-			b.Logger.LogError("Tournament stop failed", adminInfo, "Failed to get planned tournaments", err)
-		} else {
-			for i, t := range tournaments {
-				if t.Status == types.StatusActive {
-					tournaments[i].Status = types.StatusCompleted
-					if saveErr := redis.SavePlannedTournament(ctx, tournaments[i]); saveErr != nil {
-						b.Logger.LogError("Tournament stop failed", adminInfo, "Failed to update planned tournament status", saveErr)
-					} else {
-						b.Logger.LogInfo("Tournament status updated", adminInfo, fmt.Sprintf("Planned tournament %s marked as completed", t.ID))
-					}
-					break
-				}
-			}
-		}
-
-		if err := b.Tournament.RemoveTournament(ctx); err != nil {
-			b.Logger.LogError("Tournament stop failed", adminInfo, "Failed to remove tournament", err)
+		if err := scheduler.EndCurrentTournament(ctx, adminInfo); err != nil {
 			return b.EditMessage(chatID, messageID, fmt.Sprintf("ошибка при остановке турнира: %v", err))
 		}
-		b.Logger.LogSuccess("Tournament stopped", adminInfo, "Tournament successfully stopped by admin")
 		return b.EditMessage(chatID, messageID, "✅ турнир остановлен")
 	}
 
