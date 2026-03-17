@@ -78,52 +78,70 @@ func handleHelp(b *bot.Bot, update tgbotapi.Update) error {
 
 func handleTournamentJSON(b *bot.Bot, update tgbotapi.Update) error {
 	errorContext := utils.CreateErrorContext(&update, "handle_tournament_json")
+	adminInfo := logger.ExtractUserInfoFromUpdate(&update, "admin group")
 
 	if b.Tournament == nil {
-		utils.LogError(errorContext, fmt.Errorf("tournament manager is nil"), "tournament manager not initialized")
-		return b.SendMessage(update.Message.Chat.ID, "ошибка: менеджер турниров не инициализирован")
+		b.Logger.LogError("handle_tournament_json", adminInfo, "tournament manager is nil", fmt.Errorf("tournament manager is nil"))
+		b.SendMessage(update.Message.Chat.ID, "ошибка: менеджер турниров не инициализирован")
+		return nil
 	}
 
 	jsonStr, err := b.Tournament.GetTournamentJSON()
 	if err != nil {
-		utils.LogError(errorContext, err, "failed to get tournament json")
+		b.Logger.LogError("handle_tournament_json", adminInfo, "failed to get tournament json", err)
 		fallbackMsg := utils.FormatUserErrorMessage(errorContext.TraceID, "ошибка при получении данных турнира")
-		return b.SendMessage(update.Message.Chat.ID, fallbackMsg)
+		b.SendMessage(update.Message.Chat.ID, fallbackMsg)
+		return nil
 	}
 
 	if jsonStr == "" {
-		return b.SendMessage(update.Message.Chat.ID, "данные турнира пусты")
+		b.SendMessage(update.Message.Chat.ID, "данные турнира пусты")
+		return nil
 	}
 
-	return b.SendMessageWithMarkdown(update.Message.Chat.ID, fmt.Sprintf("```json\n%s```", jsonStr), true)
+	if err := b.SendMessageWithMarkdown(update.Message.Chat.ID, fmt.Sprintf("```json\n%s```", jsonStr), true); err != nil {
+		b.Logger.LogError("handle_tournament_json", adminInfo, "failed to send tournament json", err)
+		return nil
+	}
+	return nil
 }
 
 func handleTournament(b *bot.Bot, update tgbotapi.Update) error {
 	errorContext := utils.CreateErrorContext(&update, "handle_tournament")
+	adminInfo := logger.ExtractUserInfoFromUpdate(&update, "admin group")
 
 	if b.Tournament == nil {
-		utils.LogError(errorContext, fmt.Errorf("tournament manager is nil"), "tournament manager not initialized")
-		return b.SendMessage(update.Message.Chat.ID, "ошибка: менеджер турниров не инициализирован")
+		b.Logger.LogError("handle_tournament", adminInfo, "tournament manager is nil", fmt.Errorf("tournament manager is nil"))
+		b.SendMessage(update.Message.Chat.ID, "ошибка: менеджер турниров не инициализирован")
+		return nil
 	}
 
 	if !b.Tournament.Metadata.Exists {
-		return b.SendMessage(update.Message.Chat.ID, "турнир не создан")
+		b.SendMessage(update.Message.Chat.ID, "турнир не создан")
+		return nil
 	}
 
 	message, err := buildTournamentMessageForAdmin(b)
 	if err != nil {
-		utils.LogError(errorContext, err, "failed to build tournament message")
+		b.Logger.LogError("handle_tournament", adminInfo, "failed to build tournament message", err)
 		fallbackMsg := utils.FormatUserErrorMessage(errorContext.TraceID, "ошибка при получении данных турнира")
-		return b.SendMessage(update.Message.Chat.ID, fallbackMsg)
+		b.SendMessage(update.Message.Chat.ID, fallbackMsg)
+		return nil
 	}
 
-	return b.SendMessageWithMarkdown(update.Message.Chat.ID, message, true)
+	if err := b.SendMessageWithMarkdownV2(update.Message.Chat.ID, message, true); err != nil {
+		b.Logger.LogError("handle_tournament", adminInfo, "failed to send tournament message", err)
+		return nil
+	}
+	return nil
 }
 
-func formatPlayerLineForAdmin(num int, player types.Player) (string, error) {
+func formatPlayerLineForAdmin(num int, player types.Player) string {
 	if player.SavedName == "" {
-		return "", fmt.Errorf("player has empty saved name")
+		return fmt.Sprintf("%d\\. \\(unknown\\)", num)
 	}
+
+	escapedName := utils.EscapeMDV2(player.SavedName)
 
 	var playerLine string
 	if player.CheckinMessageID != 0 && player.CheckinChatID != 0 {
@@ -131,53 +149,57 @@ func formatPlayerLineForAdmin(num int, player types.Player) (string, error) {
 		if chatIDForLink < 0 {
 			chatIDForLink = -chatIDForLink - 1000000000000
 		}
-		if chatIDForLink <= 0 {
-			return "", fmt.Errorf("invalid chat ID for link: %d", chatIDForLink)
+		if chatIDForLink > 0 {
+			messageLink := fmt.Sprintf("https://t.me/c/%d/%d", chatIDForLink, player.CheckinMessageID)
+			playerLine = fmt.Sprintf("%d\\. [%s](%s)", num, escapedName, messageLink)
+		} else {
+			playerLine = fmt.Sprintf("%d\\. %s", num, escapedName)
 		}
-		messageLink := fmt.Sprintf("https://t.me/c/%d/%d", chatIDForLink, player.CheckinMessageID)
-		playerLine = fmt.Sprintf("%d. [%s](%s)", num, player.SavedName, messageLink)
 	} else {
-		playerLine = fmt.Sprintf("%d. %s", num, player.SavedName)
+		playerLine = fmt.Sprintf("%d\\. %s", num, escapedName)
 	}
 
 	if player.Username != "" {
-		playerLine += fmt.Sprintf(" (@%s)", player.Username)
+		playerLine += fmt.Sprintf(" \\(@%s\\)", utils.EscapeMDV2(player.Username))
 	}
 
 	if player.PeakRating != nil {
-		var siteURL string
+		rating := utils.EscapeMDV2(fmt.Sprintf("%d", player.PeakRating.BlitzPeak))
 		switch player.PeakRating.Site {
 		case types.SiteLichess:
-			if player.PeakRating.SiteUsername == "" {
-				return "", fmt.Errorf("lichess player has empty username")
+			if player.PeakRating.SiteUsername != "" {
+				siteURL := fmt.Sprintf("https://lichess.org/@/%s", player.PeakRating.SiteUsername)
+				playerLine += fmt.Sprintf(" \\([lichess](%s) %s\\)", siteURL, rating)
+			} else {
+				playerLine += fmt.Sprintf(" \\(lichess %s\\)", rating)
 			}
-			siteURL = fmt.Sprintf("https://lichess.org/@/%s", player.PeakRating.SiteUsername)
-			playerLine += fmt.Sprintf(" ([%s](%s) %d)", player.PeakRating.Site, siteURL, player.PeakRating.BlitzPeak)
 		case types.SiteChesscom:
-			if player.PeakRating.SiteUsername == "" {
-				return "", fmt.Errorf("chess.com player has empty username")
+			if player.PeakRating.SiteUsername != "" {
+				siteURL := fmt.Sprintf("https://www.chess.com/member/%s", player.PeakRating.SiteUsername)
+				playerLine += fmt.Sprintf(" \\([chesscom](%s) %s\\)", siteURL, rating)
+			} else {
+				playerLine += fmt.Sprintf(" \\(chesscom %s\\)", rating)
 			}
-			siteURL = fmt.Sprintf("https://www.chess.com/member/%s", player.PeakRating.SiteUsername)
-			playerLine += fmt.Sprintf(" ([%s](%s) %d)", player.PeakRating.Site, siteURL, player.PeakRating.BlitzPeak)
 		default:
-			return "", fmt.Errorf("unknown rating site: %s", player.PeakRating.Site)
+			playerLine += fmt.Sprintf(" \\(%s %s\\)", utils.EscapeMDV2(string(player.PeakRating.Site)), rating)
 		}
 	}
 
-	return playerLine, nil
+	return playerLine
 }
 
-func formatPlayerLineForAdminWithMetadata(num int, player types.Player, metadata types.TournamentMetadata) (string, error) {
-	playerLine, err := formatPlayerLineForAdmin(num, player)
-	if err != nil {
-		return "", err
-	}
+func formatPlayerLineForAdminWithMetadata(num int, player types.Player) string {
+	playerLine := formatPlayerLineForAdmin(num, player)
 
 	if player.AllowToGreen {
 		playerLine += " 🍀"
 	}
 
-	return playerLine, nil
+	return playerLine
+}
+
+func escapeMDV2Header(s string) string {
+	return utils.EscapeMDV2(s)
 }
 
 func buildTournamentMessageForAdmin(b *bot.Bot) (string, error) {
@@ -189,17 +211,12 @@ func buildTournamentMessageForAdmin(b *bot.Bot) (string, error) {
 		return "", fmt.Errorf("tournament list is nil")
 	}
 
-	message := "участники:\n"
+	message := escapeMDV2Header("участники:") + "\n"
 
 	count := 1
 	for _, player := range b.Tournament.List {
 		if player.State == types.StateInTournament {
-			playerLine, err := formatPlayerLineForAdminWithMetadata(count, player, b.Tournament.Metadata)
-			if err != nil {
-				log.Printf("failed to format player line for admin: %v", err)
-				continue
-			}
-			message += playerLine + "\n"
+			message += formatPlayerLineForAdminWithMetadata(count, player) + "\n"
 			count++
 		}
 	}
@@ -216,14 +233,9 @@ func buildTournamentMessageForAdmin(b *bot.Bot) (string, error) {
 	}
 
 	if len(queuedPlayers) > 0 {
-		message += "\nочередь:\n"
+		message += "\n" + escapeMDV2Header("очередь:") + "\n"
 		for i, player := range queuedPlayers {
-			playerLine, err := formatPlayerLineForAdminWithMetadata(i+1, player, b.Tournament.Metadata)
-			if err != nil {
-				log.Printf("failed to format queued player line for admin: %v", err)
-				continue
-			}
-			message += playerLine + "\n"
+			message += formatPlayerLineForAdminWithMetadata(i+1, player) + "\n"
 		}
 	}
 

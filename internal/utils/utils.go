@@ -6,10 +6,37 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
 )
+
+var mdV2Replacer = strings.NewReplacer(
+	`\`, `\\`,
+	`_`, `\_`,
+	`*`, `\*`,
+	`[`, `\[`,
+	`]`, `\]`,
+	`(`, `\(`,
+	`)`, `\)`,
+	`~`, `\~`,
+	"`", "\\`",
+	`>`, `\>`,
+	`#`, `\#`,
+	`+`, `\+`,
+	`-`, `\-`,
+	`=`, `\=`,
+	`|`, `\|`,
+	`{`, `\{`,
+	`}`, `\}`,
+	`.`, `\.`,
+	`!`, `\!`,
+)
+
+func EscapeMDV2(s string) string {
+	return mdV2Replacer.Replace(s)
+}
 
 type TopRatings struct {
 	Blitz     int
