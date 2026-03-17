@@ -111,14 +111,19 @@ func handleCheckIn(b *bot.Bot, update tgbotapi.Update) error {
 		} else {
 			lichessRatingLimit := b.Tournament.Metadata.LichessRatingLimit
 			if lichessRatingLimit != 0 {
-				if lichessPeakRatings.Blitz >= lichessRatingLimit ||
-					lichessPeakRatings.Rapid >= lichessRatingLimit ||
-					lichessPeakRatings.Classical >= lichessRatingLimit {
+				maxRating := lichessPeakRatings.Blitz
+				if lichessPeakRatings.Rapid > maxRating {
+					maxRating = lichessPeakRatings.Rapid
+				}
+				if lichessPeakRatings.Classical > maxRating {
+					maxRating = lichessPeakRatings.Classical
+				}
+				if maxRating >= lichessRatingLimit {
 					if fullUser.AllowToGreen {
 						manualAllowUsed = true
 						b.Logger.LogInfo("Manual allow used for green tournament", userInfo, "User exceeded rating limit but has manual allow")
 					} else {
-						b.Logger.LogInfo("Check-in failed - rating limit exceeded (lichess)", userInfo, fmt.Sprintf("Lichess rating %d exceeds limit %d", lichessPeakRatings.Blitz, lichessRatingLimit))
+						b.Logger.LogInfo("Check-in failed - rating limit exceeded (lichess)", userInfo, fmt.Sprintf("Lichess peak rating %d exceeds limit %d", maxRating, lichessRatingLimit))
 						return b.ReplyToMessage(update.Message.Chat.ID, update.Message.MessageID, "ваш пиковый рейтинг на личесе превышает лимит турнира")
 					}
 				}
@@ -139,14 +144,19 @@ func handleCheckIn(b *bot.Bot, update tgbotapi.Update) error {
 		} else {
 			chesscomRatingLimit := b.Tournament.Metadata.ChesscomRatingLimit
 			if chesscomRatingLimit != 0 {
-				if chesscomPeakRatings.Blitz >= chesscomRatingLimit ||
-					chesscomPeakRatings.Rapid >= chesscomRatingLimit ||
-					chesscomPeakRatings.Classical >= chesscomRatingLimit {
+				maxRating := chesscomPeakRatings.Blitz
+				if chesscomPeakRatings.Rapid > maxRating {
+					maxRating = chesscomPeakRatings.Rapid
+				}
+				if chesscomPeakRatings.Classical > maxRating {
+					maxRating = chesscomPeakRatings.Classical
+				}
+				if maxRating >= chesscomRatingLimit {
 					if fullUser.AllowToGreen {
 						manualAllowUsed = true
 						b.Logger.LogInfo("Manual allow used for green tournament", userInfo, "User exceeded rating limit but has manual allow")
 					} else {
-						b.Logger.LogInfo("Check-in failed - rating limit exceeded (chess.com)", userInfo, fmt.Sprintf("Chess.com rating %d exceeds limit %d", chesscomPeakRatings.Blitz, chesscomRatingLimit))
+						b.Logger.LogInfo("Check-in failed - rating limit exceeded (chess.com)", userInfo, fmt.Sprintf("Chess.com peak rating %d exceeds limit %d", maxRating, chesscomRatingLimit))
 						return b.ReplyToMessage(update.Message.Chat.ID, update.Message.MessageID, "ваш пиковый рейтинг на чесскоме превышает лимит турнира")
 					}
 				}
