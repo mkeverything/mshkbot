@@ -55,3 +55,15 @@ deploy: build docker-build docker-push sync-env docker-clean
 		-v /root/mshk/.env:/root/.env:ro \
 		-d sukalov/mshkbot:latest \
 	"
+
+# deployment command without build
+.PHONY: deploy-existing
+deploy-existing: docker-push sync-env docker-clean
+	ssh root@${DEPLOY_HOST} "\
+		cd /root && \
+		docker pull sukalov/mshkbot:latest && \
+		docker run --name mshk \
+		--restart always \
+		-v /root/mshk/.env:/root/.env:ro \
+		-d sukalov/mshkbot:latest \
+	"
