@@ -133,10 +133,22 @@ func (s *Scheduler) timeUntilNext(task scheduledTask) time.Duration {
 	return duration
 }
 
-func (s *Scheduler) scheduledTournamentStart(limit int, lichessRatingLimit int, chesscomRatingLimit int, announcementIntro string) {
+func (s *Scheduler) scheduledTournamentStart(limit int, lichessRatingLimit int, chesscomRatingLimit int, announcementIntro string, endTime time.Time) {
 	ctx := context.Background()
 
-	if err := s.bot.Tournament.CreateTournament(ctx, limit, lichessRatingLimit, chesscomRatingLimit, announcementIntro, ""); err != nil {
+	if s.bot.Tournament.Metadata.Exists {
+		if err := s.EndCurrentTournament(ctx, nil); err != nil {
+			log.Printf("failed to end active tournament before scheduled start: %v", err)
+			s.bot.Logger.LogError("Scheduled Tournament Start", &logger.UserInfo{
+				ID:       0,
+				ChatID:   s.mainGroupID,
+				ChatType: "system",
+			}, "Failed to end active tournament before scheduled start", err)
+			return
+		}
+	}
+
+	if err := s.bot.Tournament.CreateTournament(ctx, limit, lichessRatingLimit, chesscomRatingLimit, announcementIntro, "", endTime); err != nil {
 		log.Printf("failed to create tournament: %v", err)
 		s.bot.Logger.LogError("Scheduled Tournament Start", &logger.UserInfo{
 			ID:       0,
@@ -262,7 +274,13 @@ func (s *Scheduler) scheduledTournamentStartFromSchedule(weekday time.Weekday) {
 		return
 	}
 
-	s.scheduledTournamentStart(event.Limit, event.LichessLimit, event.ChesscomLimit, event.Intro)
+	now := time.Now().In(s.timezone)
+	endTime := time.Date(now.Year(), now.Month(), now.Day(), event.EndHour, 0, 0, 0, s.timezone)
+	if !endTime.After(now) {
+		endTime = endTime.AddDate(0, 0, 1)
+	}
+
+	s.scheduledTournamentStart(event.Limit, event.LichessLimit, event.ChesscomLimit, event.Intro, endTime.UTC())
 }
 
 func (s *Scheduler) scheduledTournamentEndFromSchedule(weekday time.Weekday) {
@@ -284,7 +302,7 @@ func (s *Scheduler) startPlannedTournamentChecker() {
 		for {
 			select {
 			case <-ticker.C:
-				s.checkAndStartPlannedTournaments()
+				s.checkPlannedTournaments()
 			case <-s.stopChan:
 				return
 			}
@@ -292,9 +310,15 @@ func (s *Scheduler) startPlannedTournamentChecker() {
 	}()
 }
 
-// checkAndStartPlannedTournaments checks for planned tournaments that should start now
-func (s *Scheduler) checkAndStartPlannedTournaments() {
+// checkPlannedTournaments checks active overdue tournament and starts due planned tournaments
+func (s *Scheduler) checkPlannedTournaments() {
 	ctx := context.Background()
+
+	if s.isActiveTournamentOverdue(time.Now().UTC()) {
+		if err := s.EndCurrentTournament(ctx, nil); err != nil {
+			log.Printf("failed to end overdue tournament: %v", err)
+		}
+	}
 
 	tournaments, err := redis.GetTournamentsToStart(ctx)
 	if err != nil {
@@ -303,13 +327,13 @@ func (s *Scheduler) checkAndStartPlannedTournaments() {
 	}
 
 	for _, tournament := range tournaments {
-		// Check if a tournament is already active
 		if s.bot.Tournament.Metadata.Exists {
-			log.Printf("cannot start planned tournament %s: tournament already active", tournament.ID)
-			continue
+			if err := s.EndCurrentTournament(ctx, nil); err != nil {
+				log.Printf("cannot start planned tournament %s: failed to end active tournament: %v", tournament.ID, err)
+				continue
+			}
 		}
 
-		// Start the tournament
 		s.StartPlannedTournament(tournament, nil)
 	}
 }
@@ -320,8 +344,14 @@ func (s *Scheduler) checkAndStartPlannedTournaments() {
 func (s *Scheduler) StartPlannedTournament(tournament types.PlannedTournament, adminInfo *logger.UserInfo) {
 	ctx := context.Background()
 
-	// Create tournament
-	if err := s.bot.Tournament.CreateTournament(ctx, tournament.Limit, tournament.LichessLimit, tournament.ChesscomLimit, tournament.Intro, tournament.ID); err != nil {
+	if s.bot.Tournament.Metadata.Exists {
+		if err := s.EndCurrentTournament(ctx, nil); err != nil {
+			log.Printf("failed to end active tournament before starting planned tournament %s: %v", tournament.ID, err)
+			return
+		}
+	}
+
+	if err := s.bot.Tournament.CreateTournament(ctx, tournament.Limit, tournament.LichessLimit, tournament.ChesscomLimit, tournament.Intro, tournament.ID, tournament.EndTime); err != nil {
 		log.Printf("failed to create planned tournament %s: %v", tournament.ID, err)
 
 		logUserInfo := &logger.UserInfo{
@@ -374,7 +404,6 @@ func (s *Scheduler) StartPlannedTournament(tournament types.PlannedTournament, a
 		log.Printf("failed to update planned tournament %s status: %v", tournament.ID, err)
 	}
 
-	// Schedule auto-end
 	go s.SchedulePlannedTournamentEnd(tournament)
 
 	logUserInfo := &logger.UserInfo{
@@ -391,6 +420,19 @@ func (s *Scheduler) StartPlannedTournament(tournament types.PlannedTournament, a
 	s.bot.Logger.LogSuccess(logAction, logUserInfo, fmt.Sprintf("Planned tournament %s started: limit=%d, lichess<%d, chesscom<%d", tournament.Name, tournament.Limit, tournament.LichessLimit, tournament.ChesscomLimit))
 
 	log.Printf("planned tournament %s started: limit=%d, lichess_limit=%d, chesscom_limit=%d", tournament.ID, tournament.Limit, tournament.LichessLimit, tournament.ChesscomLimit)
+}
+
+func (s *Scheduler) isActiveTournamentOverdue(now time.Time) bool {
+	if !s.bot.Tournament.Metadata.Exists {
+		return false
+	}
+
+	endTime := s.bot.Tournament.Metadata.EndTime
+	if endTime.IsZero() {
+		return false
+	}
+
+	return !endTime.After(now)
 }
 
 // SchedulePlannedTournamentEnd schedules the end of a planned tournament at its EndTime

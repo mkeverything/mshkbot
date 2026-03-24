@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/sukalov/mshkbot/internal/redis"
 	"github.com/sukalov/mshkbot/internal/types"
@@ -119,7 +120,7 @@ func (tm *TournamentManager) AddPlayer(ctx context.Context, player types.Player)
 	return nil
 }
 
-func (tm *TournamentManager) CreateTournament(ctx context.Context, limit int, lichessRatingLimit int, chesscomRatingLimit int, announcementIntro string, plannedID string) error {
+func (tm *TournamentManager) CreateTournament(ctx context.Context, limit int, lichessRatingLimit int, chesscomRatingLimit int, announcementIntro string, plannedID string, endTime time.Time) error {
 	tm.mu.Lock()
 	defer tm.mu.Unlock()
 	if tm.Metadata.Exists {
@@ -130,6 +131,7 @@ func (tm *TournamentManager) CreateTournament(ctx context.Context, limit int, li
 		LichessRatingLimit:  lichessRatingLimit,
 		ChesscomRatingLimit: chesscomRatingLimit,
 		AnnouncementIntro:   announcementIntro,
+		EndTime:             endTime,
 		Exists:              true,
 		PlannedID:           plannedID,
 	}
@@ -152,6 +154,7 @@ func (tm *TournamentManager) RemoveTournament(ctx context.Context) error {
 		ChesscomRatingLimit:   0,
 		AnnouncementMessageID: 0,
 		AnnouncementIntro:     "",
+		EndTime:               time.Time{},
 		Exists:                false,
 		PlannedID:             "",
 	}
@@ -173,6 +176,7 @@ func (tm *TournamentManager) removeTournament(ctx context.Context) error {
 		ChesscomRatingLimit:   0,
 		AnnouncementMessageID: 0,
 		AnnouncementIntro:     "",
+		EndTime:               time.Time{},
 		Exists:                false,
 	}
 	if err := tm.clearList(ctx); err != nil {
