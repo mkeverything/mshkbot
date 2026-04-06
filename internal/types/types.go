@@ -29,6 +29,8 @@ const (
 	StateCheckedOut   = "checked_out"
 )
 
+const CheckoutCooldownDuration = 30 * time.Minute
+
 const SiteLichess = "lichess"
 const SiteChesscom = "chesscom"
 

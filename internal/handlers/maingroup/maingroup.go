@@ -82,11 +82,24 @@ func handleCheckIn(b *bot.Bot, update tgbotapi.Update) error {
 
 	if existingPlayer != nil {
 		if existingPlayer.State == types.StateCheckedOut {
-			b.Logger.LogInfo("Check-in failed - already checked out", userInfo, "User attempted check-in but already checked out")
-			return b.ReplyToMessage(update.Message.Chat.ID, update.Message.MessageID, "вы уже вышли, теперь придётся подождать")
+			timeSinceCheckout := time.Since(existingPlayer.CheckedOutTime)
+
+			if timeSinceCheckout < types.CheckoutCooldownDuration {
+				remaining := types.CheckoutCooldownDuration - timeSinceCheckout
+				b.Logger.LogInfo("Check-in blocked - cooldown not complete", userInfo, fmt.Sprintf("User attempted re-check-in with %v remaining", remaining))
+				return b.ReplyToMessage(update.Message.Chat.ID, update.Message.MessageID, fmt.Sprintf("вы уже вышли, теперь придётся подождать. осталось минут: %d", int(remaining.Minutes())+1))
+			}
+
+			if err := b.Tournament.RemovePlayer(ctx, userID); err != nil {
+				b.Logger.LogError("Failed to remove old player instance", userInfo, "Failed to remove checked-out player before re-check-in", err)
+			} else {
+				b.Logger.LogSuccess("Old player instance removed", userInfo, "Removed checked-out player after cooldown")
+			}
+			existingPlayer = nil
+		} else {
+			b.Logger.LogInfo("Check-in failed - already checked in", userInfo, "User attempted check-in but already in tournament")
+			return b.ReplyToMessage(update.Message.Chat.ID, update.Message.MessageID, utils.AlreadyCheckedInMessage())
 		}
-		b.Logger.LogInfo("Check-in failed - already checked in", userInfo, "User attempted check-in but already in tournament")
-		return b.ReplyToMessage(update.Message.Chat.ID, update.Message.MessageID, utils.AlreadyCheckedInMessage())
 	}
 
 	lichessRatingLimit := b.Tournament.Metadata.LichessRatingLimit
@@ -279,8 +292,6 @@ func handleCheckOut(b *bot.Bot, update tgbotapi.Update) error {
 		b.Logger.LogError("Announcement update failed", userInfo, "Failed to update tournament announcement message", err)
 	}
 
-	go schedulePlayerCleanup(b, userID, 15*time.Minute)
-
 	return b.GiveReaction(update.Message.Chat.ID, update.Message.MessageID, utils.SadEmoji())
 }
 
@@ -304,29 +315,6 @@ func countActivePlayers(players []types.Player) int {
 		}
 	}
 	return count
-}
-
-func schedulePlayerCleanup(b *bot.Bot, playerID int, delay time.Duration) {
-	time.Sleep(delay)
-
-	ctx := context.Background()
-
-	var shouldRemove bool
-	for _, player := range b.Tournament.List {
-		if player.ID == playerID && player.State == types.StateCheckedOut {
-			shouldRemove = true
-			break
-		}
-	}
-
-	if shouldRemove {
-		if err := b.Tournament.RemovePlayer(ctx, playerID); err != nil {
-			log.Printf("failed to cleanup checked-out player %d: %v", playerID, err)
-			return
-		}
-
-		log.Printf("cleaned up checked-out player %d after %v", playerID, delay)
-	}
 }
 
 func UpdateAnnouncementMessage(b *bot.Bot, chatID int64) error {
