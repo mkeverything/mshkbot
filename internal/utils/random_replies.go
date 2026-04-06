@@ -6,13 +6,12 @@ import (
 
 func ApproveEmoji() string {
 	n := rand.Intn(100)
-
-	if n < 2 {
+	rareReactionProbability := 1
+	
+	if n < rareReactionProbability {
 		return "🎉"
 	}
-
-	remaining := (n - 2) % 5
-
+	remaining := (n - rareReactionProbability) % 5
 	switch remaining {
 	case 0:
 		return "👍"
