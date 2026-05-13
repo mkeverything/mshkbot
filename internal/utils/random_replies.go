@@ -7,7 +7,7 @@ import (
 func ApproveEmoji() string {
 	n := rand.Intn(100)
 	rareReactionProbability := 1
-	
+
 	if n < rareReactionProbability {
 		return "🎉"
 	}
@@ -23,6 +23,19 @@ func ApproveEmoji() string {
 		return "✍️"
 	default:
 		return "🤝"
+	}
+}
+
+func RandomCongratulation(mentionMarkdownV2 string) string {
+	switch rand.Intn(4) {
+	case 0:
+		return EscapeMDV2("у нас ПОБЕДИТЕЛЬ!!! ") + mentionMarkdownV2 + EscapeMDV2(" выиграл праздник")
+	case 1:
+		return "🎉🎉🎉🎉🎉🎉🎉🎉🎉 " + mentionMarkdownV2
+	case 2:
+		return EscapeMDV2("товарищи это победа: праздник на улице ") + mentionMarkdownV2
+	default:
+		return EscapeMDV2("УРА! У РА УУУУУУ ра пиво выигрывает ") + mentionMarkdownV2
 	}
 }
 

@@ -135,66 +135,8 @@ func handleTournament(b *bot.Bot, update tgbotapi.Update) error {
 	return nil
 }
 
-func formatPlayerLineForAdmin(num int, player types.Player) string {
-	if player.SavedName == "" {
-		return fmt.Sprintf("%d\\. \\(unknown\\)", num)
-	}
-
-	escapedName := utils.EscapeMDV2(player.SavedName)
-
-	var playerLine string
-	if player.CheckinMessageID != 0 && player.CheckinChatID != 0 {
-		chatIDForLink := player.CheckinChatID
-		if chatIDForLink < 0 {
-			chatIDForLink = -chatIDForLink - 1000000000000
-		}
-		if chatIDForLink > 0 {
-			messageLink := fmt.Sprintf("https://t.me/c/%d/%d", chatIDForLink, player.CheckinMessageID)
-			playerLine = fmt.Sprintf("%d\\. [%s](%s)", num, escapedName, messageLink)
-		} else {
-			playerLine = fmt.Sprintf("%d\\. %s", num, escapedName)
-		}
-	} else {
-		playerLine = fmt.Sprintf("%d\\. %s", num, escapedName)
-	}
-
-	if player.Username != "" {
-		playerLine += fmt.Sprintf(" \\(@%s\\)", utils.EscapeMDV2(player.Username))
-	}
-
-	if player.PeakRating != nil {
-		rating := utils.EscapeMDV2(fmt.Sprintf("%d", player.PeakRating.BlitzPeak))
-		switch player.PeakRating.Site {
-		case types.SiteLichess:
-			if player.PeakRating.SiteUsername != "" {
-				siteURL := fmt.Sprintf("https://lichess.org/@/%s", player.PeakRating.SiteUsername)
-				playerLine += fmt.Sprintf(" \\([lichess](%s) %s\\)", siteURL, rating)
-			} else {
-				playerLine += fmt.Sprintf(" \\(lichess %s\\)", rating)
-			}
-		case types.SiteChesscom:
-			if player.PeakRating.SiteUsername != "" {
-				siteURL := fmt.Sprintf("https://www.chess.com/member/%s", player.PeakRating.SiteUsername)
-				playerLine += fmt.Sprintf(" \\([chesscom](%s) %s\\)", siteURL, rating)
-			} else {
-				playerLine += fmt.Sprintf(" \\(chesscom %s\\)", rating)
-			}
-		default:
-			playerLine += fmt.Sprintf(" \\(%s %s\\)", utils.EscapeMDV2(string(player.PeakRating.Site)), rating)
-		}
-	}
-
-	return playerLine
-}
-
 func formatPlayerLineForAdminWithMetadata(num int, player types.Player) string {
-	playerLine := formatPlayerLineForAdmin(num, player)
-
-	if player.AllowToGreen {
-		playerLine += " 🍀"
-	}
-
-	return playerLine
+	return utils.FormatPlayerLineAdminWithMetadataMarkdownV2(num, player)
 }
 
 func escapeMDV2Header(s string) string {

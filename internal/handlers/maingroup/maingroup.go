@@ -226,7 +226,19 @@ func handleCheckIn(b *bot.Bot, update tgbotapi.Update) error {
 	if state == types.StateQueued {
 		return b.ReplyToMessage(update.Message.Chat.ID, update.Message.MessageID, "места закончились, добавили вас в очередь")
 	}
-	return b.GiveReaction(update.Message.Chat.ID, update.Message.MessageID, utils.ApproveEmoji())
+	emoji := utils.ApproveEmoji()
+	if emoji == "🎉" {
+		if adminID := b.GetAdminGroupID(); adminID != 0 {
+			mention := utils.FormatPlayerMentionAdminWithMetadataMarkdownV2(newPlayer)
+			text := utils.RandomCongratulation(mention)
+			if err := b.SendMessageWithMarkdownV2(adminID, text, true); err != nil {
+				b.Logger.LogError("Rare check-in reaction admin notify", userInfo, "Failed to send congratulations to admin group", err)
+			} else {
+				b.Logger.LogSuccess("Rare check-in reaction", userInfo, fmt.Sprintf("Admin group notified for player %s", fullUser.SavedName))
+			}
+		}
+	}
+	return b.GiveReaction(update.Message.Chat.ID, update.Message.MessageID, emoji)
 }
 
 func handleCheckOut(b *bot.Bot, update tgbotapi.Update) error {
