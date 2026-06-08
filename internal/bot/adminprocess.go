@@ -13,6 +13,7 @@ const (
 	ProcessTypeUnban          AdminProcessType = "unban"
 	ProcessTypeAdmitToGreen   AdminProcessType = "admit_to_green"
 	ProcessTypeAllowToGreen   AdminProcessType = "allow_to_green"
+	ProcessTypeForceCheckin   AdminProcessType = "force_checkin"
 	ProcessTypeCreateEvent    AdminProcessType = "create_event"
 	ProcessTypeStartCustom    AdminProcessType = "start_custom"
 	ProcessTypePlanTournament AdminProcessType = "plan_tournament"

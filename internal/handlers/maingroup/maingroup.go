@@ -55,14 +55,40 @@ func handleCheckIn(b *bot.Bot, update tgbotapi.Update) error {
 		return b.ReplyToMessage(update.Message.Chat.ID, update.Message.MessageID, "мы с вами в личке ещё не закончили регистрацию")
 	}
 
+	fullUser, err := db.GetByChatID(update.Message.From.ID)
+	if err != nil {
+		errorContext := utils.CreateErrorContext(&update, "get_user_for_checkin_complete")
+		utils.LogError(errorContext, err, "failed to get full user data")
+		b.Logger.LogError("Check-in failed", userInfo, "Failed to get full user data for check-in", err)
+		return b.ReplyToMessage(update.Message.Chat.ID, update.Message.MessageID, utils.FormatUserErrorMessage(errorContext.TraceID, "ошибка при получении данных пользователя"))
+	}
+
+	_, err = checkInUser(b, fullUser, update.Message.Chat.ID, update.Message.MessageID, update.Message.Chat.ID, "main group", true)
+	return err
+}
+
+func ForceCheckInUser(b *bot.Bot, update tgbotapi.Update, fullUser db.User) (bool, error) {
+	if fullUser.State != db.StateCompleted {
+		return false, b.ReplyToMessage(update.Message.Chat.ID, update.Message.MessageID, "мы с ним в личке ещё не закончили регистрацию")
+	}
+
+	return checkInUser(b, fullUser, update.Message.Chat.ID, update.Message.MessageID, b.GetMainGroupID(), "admin group", update.Message.ForwardFrom != nil)
+}
+
+func checkInUser(b *bot.Bot, fullUser db.User, responseChatID int64, responseMessageID int, announcementChatID int64, chatType string, reactOnSuccess bool) (bool, error) {
 	ctx := context.Background()
+	userID := int(fullUser.ChatID)
+	userInfo := &logger.UserInfo{
+		ID:        fullUser.ChatID,
+		Username:  fullUser.Username,
+		FirstName: fullUser.SavedName,
+		ChatType:  chatType,
+	}
 
 	if !b.Tournament.Metadata.Exists {
 		b.Logger.LogInfo("Check-in failed - no tournament", userInfo, "User attempted check-in but no tournament exists")
-		return b.ReplyToMessage(update.Message.Chat.ID, update.Message.MessageID, utils.CheckinUnavailibleMessage())
+		return false, b.ReplyToMessage(responseChatID, responseMessageID, utils.CheckinUnavailibleMessage())
 	}
-
-	userID := int(update.Message.From.ID)
 
 	var existingPlayer *types.Player
 	for _, player := range b.Tournament.List {
@@ -72,14 +98,6 @@ func handleCheckIn(b *bot.Bot, update tgbotapi.Update) error {
 		}
 	}
 
-	fullUser, err := db.GetByChatID(update.Message.From.ID)
-	if err != nil {
-		errorContext := utils.CreateErrorContext(&update, "get_user_for_checkin_complete")
-		utils.LogError(errorContext, err, "failed to get full user data")
-		b.Logger.LogError("Check-in failed", userInfo, "Failed to get full user data for check-in", err)
-		return b.ReplyToMessage(update.Message.Chat.ID, update.Message.MessageID, utils.FormatUserErrorMessage(errorContext.TraceID, "ошибка при получении данных пользователя"))
-	}
-
 	if existingPlayer != nil {
 		if existingPlayer.State == types.StateCheckedOut {
 			timeSinceCheckout := time.Since(existingPlayer.CheckedOutTime)
@@ -87,7 +105,7 @@ func handleCheckIn(b *bot.Bot, update tgbotapi.Update) error {
 			if timeSinceCheckout < types.CheckoutCooldownDuration {
 				remaining := types.CheckoutCooldownDuration - timeSinceCheckout
 				b.Logger.LogInfo("Check-in blocked - cooldown not complete", userInfo, fmt.Sprintf("User attempted re-check-in with %v remaining", remaining))
-				return b.ReplyToMessage(update.Message.Chat.ID, update.Message.MessageID, fmt.Sprintf("вы уже вышли, теперь придётся подождать. осталось минут: %d", int(remaining.Minutes())+1))
+				return false, b.ReplyToMessage(responseChatID, responseMessageID, fmt.Sprintf("вы уже вышли, теперь придётся подождать. осталось минут: %d", int(remaining.Minutes())+1))
 			}
 
 			if err := b.Tournament.RemovePlayer(ctx, userID); err != nil {
@@ -98,7 +116,7 @@ func handleCheckIn(b *bot.Bot, update tgbotapi.Update) error {
 			existingPlayer = nil
 		} else {
 			b.Logger.LogInfo("Check-in failed - already checked in", userInfo, "User attempted check-in but already in tournament")
-			return b.ReplyToMessage(update.Message.Chat.ID, update.Message.MessageID, utils.AlreadyCheckedInMessage())
+			return false, b.ReplyToMessage(responseChatID, responseMessageID, utils.AlreadyCheckedInMessage())
 		}
 	}
 
@@ -109,7 +127,7 @@ func handleCheckIn(b *bot.Bot, update tgbotapi.Update) error {
 	if isGreenTournament {
 		if fullUser.NotGreenUntil != nil && time.Now().Before(*fullUser.NotGreenUntil) {
 			b.Logger.LogInfo("Check-in failed - suspended from green tournaments", userInfo, "User attempted check-in to green tournament but is suspended")
-			return b.ReplyToMessage(update.Message.Chat.ID, update.Message.MessageID, "вам нельзя в этом турнире играть")
+			return false, b.ReplyToMessage(responseChatID, responseMessageID, "вам нельзя в этом турнире играть")
 		}
 	}
 
@@ -137,7 +155,7 @@ func handleCheckIn(b *bot.Bot, update tgbotapi.Update) error {
 						b.Logger.LogInfo("Manual allow used for green tournament", userInfo, "User exceeded rating limit but has manual allow")
 					} else {
 						b.Logger.LogInfo("Check-in failed - rating limit exceeded (lichess)", userInfo, fmt.Sprintf("Lichess peak rating %d exceeds limit %d", maxRating, lichessRatingLimit))
-						return b.ReplyToMessage(update.Message.Chat.ID, update.Message.MessageID, "ваш пиковый рейтинг на личесе превышает лимит турнира")
+						return false, b.ReplyToMessage(responseChatID, responseMessageID, "ваш пиковый рейтинг на личесе превышает лимит турнира")
 					}
 				}
 			}
@@ -170,7 +188,7 @@ func handleCheckIn(b *bot.Bot, update tgbotapi.Update) error {
 						b.Logger.LogInfo("Manual allow used for green tournament", userInfo, "User exceeded rating limit but has manual allow")
 					} else {
 						b.Logger.LogInfo("Check-in failed - rating limit exceeded (chess.com)", userInfo, fmt.Sprintf("Chess.com peak rating %d exceeds limit %d", maxRating, chesscomRatingLimit))
-						return b.ReplyToMessage(update.Message.Chat.ID, update.Message.MessageID, "ваш пиковый рейтинг на чесскоме превышает лимит турнира")
+						return false, b.ReplyToMessage(responseChatID, responseMessageID, "ваш пиковый рейтинг на чесскоме превышает лимит турнира")
 					}
 				}
 			}
@@ -199,8 +217,8 @@ func handleCheckIn(b *bot.Bot, update tgbotapi.Update) error {
 		TimeAdded:        time.Now().UTC(),
 		State:            state,
 		PeakRating:       peakRating,
-		CheckinMessageID: update.Message.MessageID,
-		CheckinChatID:    update.Message.Chat.ID,
+		CheckinMessageID: responseMessageID,
+		CheckinChatID:    responseChatID,
 		AllowToGreen:     manualAllowUsed,
 	}
 
@@ -213,18 +231,18 @@ func handleCheckIn(b *bot.Bot, update tgbotapi.Update) error {
 		b.Logger.LogSuccess("User checked in", userInfo, fmt.Sprintf("User %s checked in to tournament (active player)", fullUser.SavedName))
 	}
 
-	if err := db.IncrementTimesPlayed(update.Message.From.ID); err != nil {
+	if err := db.IncrementTimesPlayed(fullUser.ChatID); err != nil {
 		log.Printf("failed to increment times played for user %d: %v", userID, err)
 		b.Logger.LogError("Times played increment failed", userInfo, "Failed to increment times played counter", err)
 	}
 
-	if err := UpdateAnnouncementMessage(b, update.Message.Chat.ID); err != nil {
+	if err := UpdateAnnouncementMessage(b, announcementChatID); err != nil {
 		log.Printf("failed to update announcement message: %v", err)
 		b.Logger.LogError("Announcement update failed", userInfo, "Failed to update tournament announcement message", err)
 	}
 
 	if state == types.StateQueued {
-		return b.ReplyToMessage(update.Message.Chat.ID, update.Message.MessageID, "места закончились, добавили вас в очередь")
+		return true, b.ReplyToMessage(responseChatID, responseMessageID, "места закончились, добавили вас в очередь")
 	}
 	emoji := utils.ApproveEmoji()
 	if emoji == "🎉" {
@@ -238,7 +256,11 @@ func handleCheckIn(b *bot.Bot, update tgbotapi.Update) error {
 			}
 		}
 	}
-	return b.GiveReaction(update.Message.Chat.ID, update.Message.MessageID, emoji)
+	if reactOnSuccess {
+		return true, b.GiveReaction(responseChatID, responseMessageID, emoji)
+	}
+
+	return true, b.SendMessage(responseChatID, fmt.Sprintf("записали %s", fullUser.SavedName))
 }
 
 func handleCheckOut(b *bot.Bot, update tgbotapi.Update) error {

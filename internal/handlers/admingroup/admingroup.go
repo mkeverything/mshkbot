@@ -43,6 +43,7 @@ func GetHandlers(s *cron.Scheduler) bot.HandlerSet {
 			"admit_to_green":       handleAdmitToGreen,
 			"allow_to_green":       handleAllowToGreen,
 			"force_checkout":       handleForceCheckout,
+			"force_checkin":        handleForceCheckin,
 			"test_transliteration": handleTestTransliteration,
 			"transliterate_all":    handleTransliterateAll,
 			"send_schedule":        handleSendSchedule,
@@ -72,7 +73,7 @@ func GetHandlers(s *cron.Scheduler) bot.HandlerSet {
 }
 
 func handleHelp(b *bot.Bot, update tgbotapi.Update) error {
-	return b.SendMessage(update.Message.Chat.ID, "команды администратора:\n\n/tournament - показать состояние текущего турнира\n\n/plan_tournament - запланировать новый турнир с расписанием\n\n/planned_tournaments - список всех запланированных турниров\n\n/start_tournament - немедленно запустить запланированный турнир\n\n/cancel_tournament - отменить запланированный турнир\n\n/edit_tournament - изменить запланированный турнир\n\n/stop_tournament - остановить текущий турнир\n\n/debug_tournaments - отладка: показать все турниры в redis\n\n/cleanup_tournaments - очистка: найти и исправить застрявшие турниры\n\n/send_schedule - показать расписание на неделю\n\n/suspend_from_green - отстранить пользователя от зелёных турниров\n\n/admit_to_green - допустить пользователя к зелёным турнирам\n\n/allow_to_green - разрешить пользователю участие в зелёном турнире вручную\n\n/force_checkout - принудительно выписать пользователя из турнира\n\n/ban_player - забанить пользователя\n\n/unban_player - разбанить пользователя")
+	return b.SendMessage(update.Message.Chat.ID, "команды администратора:\n\n/tournament - показать состояние текущего турнира\n\n/plan_tournament - запланировать новый турнир с расписанием\n\n/planned_tournaments - список всех запланированных турниров\n\n/start_tournament - немедленно запустить запланированный турнир\n\n/cancel_tournament - отменить запланированный турнир\n\n/edit_tournament - изменить запланированный турнир\n\n/stop_tournament - остановить текущий турнир\n\n/debug_tournaments - отладка: показать все турниры в redis\n\n/cleanup_tournaments - очистка: найти и исправить застрявшие турниры\n\n/send_schedule - показать расписание на неделю\n\n/suspend_from_green - отстранить пользователя от зелёных турниров\n\n/admit_to_green - допустить пользователя к зелёным турнирам\n\n/allow_to_green - разрешить пользователю участие в зелёном турнире вручную\n\n/force_checkout - принудительно выписать пользователя из турнира\n\n/force_checkin - принудительно записать пользователя по пересланному сообщению\n\n/ban_player - забанить пользователя\n\n/unban_player - разбанить пользователя")
 }
 
 func handleTournamentJSON(b *bot.Bot, update tgbotapi.Update) error {
@@ -453,6 +454,19 @@ func handleAdminMessage(b *bot.Bot, update tgbotapi.Update) error {
 
 		b.Logger.LogSuccess("User allowed to green tournaments", targetUserInfo, fmt.Sprintf("User manually allowed to green tournaments by admin %s", adminInfo.Username))
 		return b.SendMessage(update.Message.Chat.ID, fmt.Sprintf("пользователю %s разрешено участие в зелёных турнирах вручную", username))
+
+	case bot.ProcessTypeForceCheckin:
+		checkedIn, err := maingroup.ForceCheckInUser(b, update, *user)
+		if err != nil {
+			b.Logger.LogError("Force check-in failed", adminInfo, fmt.Sprintf("Failed to force check in user %s", username), err)
+			return err
+		}
+
+		b.ClearAdminProcess(adminChatID)
+		if checkedIn {
+			b.Logger.LogSuccess("User force checked in", targetUserInfo, fmt.Sprintf("User force checked in by admin %s", adminInfo.Username))
+		}
+		return nil
 	}
 
 	return nil
@@ -572,6 +586,15 @@ func handleAdmitToGreen(b *bot.Bot, update tgbotapi.Update) error {
 	adminChatID := update.Message.From.ID
 	b.SetAdminProcess(adminChatID, bot.ProcessTypeAdmitToGreen, "")
 	return b.SendMessage(update.Message.Chat.ID, "учтите, игрок всё равно может не пройти по рейтингу. эта команда просто снимет внутрней бан.\n\nвведите telegram_username пользователя или перешлите его сообщение сюда для допуска к зелёным турнирам:")
+}
+
+func handleForceCheckin(b *bot.Bot, update tgbotapi.Update) error {
+	adminInfo := logger.ExtractUserInfoFromUpdate(&update, "admin group")
+	b.Logger.LogInfo("Force check-in initiated", adminInfo, "Admin initiated force check-in process")
+
+	adminChatID := update.Message.From.ID
+	b.SetAdminProcess(adminChatID, bot.ProcessTypeForceCheckin, "")
+	return b.SendMessage(update.Message.Chat.ID, "перешлите сообщение пользователя, которого нужно записать, или пришлите его username")
 }
 
 func handleTestTransliteration(b *bot.Bot, update tgbotapi.Update) error {
