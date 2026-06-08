@@ -15,7 +15,7 @@ import (
 )
 
 func Register(update tgbotapi.Update) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
 	defer cancel()
 
 	message := update.Message
@@ -42,7 +42,7 @@ func Register(update tgbotapi.Update) error {
 }
 
 func GetByChatID(chatID int64) (User, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
 	defer cancel()
 
 	var user User
@@ -59,7 +59,7 @@ func GetByChatID(chatID int64) (User, error) {
 }
 
 func GetByUsername(username string) (User, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
 	defer cancel()
 
 	var user User
@@ -76,7 +76,7 @@ func GetByUsername(username string) (User, error) {
 }
 
 func UpdateSavedName(chatID int64, newName string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
 	defer cancel()
 
 	result := Database.WithContext(ctx).
@@ -96,7 +96,7 @@ func UpdateSavedName(chatID int64, newName string) error {
 }
 
 func UpdateLichess(chatID int64, lichess string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
 	defer cancel()
 
 	var value *string
@@ -122,7 +122,7 @@ func UpdateLichess(chatID int64, lichess string) error {
 }
 
 func UpdateChessCom(chatID int64, chessCom string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
 	defer cancel()
 
 	var value *string
@@ -148,7 +148,7 @@ func UpdateChessCom(chatID int64, chessCom string) error {
 }
 
 func UpdateState(chatID int64, state State) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
 	defer cancel()
 
 	result := Database.WithContext(ctx).
@@ -168,7 +168,7 @@ func UpdateState(chatID int64, state State) error {
 }
 
 func SetBannedUntil(chatID int64, until *time.Time) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
 	defer cancel()
 
 	result := Database.WithContext(ctx).
@@ -188,7 +188,7 @@ func SetBannedUntil(chatID int64, until *time.Time) error {
 }
 
 func SetNotGreenUntil(chatID int64, until *time.Time) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
 	defer cancel()
 
 	result := Database.WithContext(ctx).
@@ -208,7 +208,7 @@ func SetNotGreenUntil(chatID int64, until *time.Time) error {
 }
 
 func SetAllowToGreen(chatID int64, allow bool) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
 	defer cancel()
 
 	result := Database.WithContext(ctx).
@@ -228,7 +228,7 @@ func SetAllowToGreen(chatID int64, allow bool) error {
 }
 
 func IncrementTimesPlayed(chatID int64) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
 	defer cancel()
 
 	result := Database.WithContext(ctx).
@@ -248,7 +248,7 @@ func IncrementTimesPlayed(chatID int64) error {
 }
 
 func DecrementTimesPlayed(chatID int64) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
 	defer cancel()
 
 	result := Database.WithContext(ctx).
@@ -270,7 +270,7 @@ func DecrementTimesPlayed(chatID int64) error {
 
 // GetAll returns all users
 func GetAll() ([]User, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
 	defer cancel()
 
 	var users []User
@@ -283,7 +283,7 @@ func GetAll() ([]User, error) {
 }
 
 func GetUser(chatID int64) (User, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
 	defer cancel()
 
 	var user User
@@ -304,7 +304,7 @@ func GetUser(chatID int64) (User, error) {
 
 // Delete removes a user by chat ID
 func Delete(chatID int64) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
 	defer cancel()
 
 	result := Database.WithContext(ctx).Where("chat_id = ?", chatID).Delete(&User{})
@@ -337,7 +337,7 @@ func Stringify(u User) string {
 
 // UpdateLichessAndState updates lichess username and state in one transaction
 func UpdateLichessAndState(chatID int64, lichess string, newState State) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
 	defer cancel()
 
 	if lichess == "" {
@@ -365,7 +365,7 @@ func UpdateLichessAndState(chatID int64, lichess string, newState State) error {
 
 // UpdateChessComAndState updates chess.com username and state in one transaction
 func UpdateChessComAndState(chatID int64, chessCom string, newState State) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
 	defer cancel()
 
 	if chessCom == "" {
@@ -393,7 +393,7 @@ func UpdateChessComAndState(chatID int64, chessCom string, newState State) error
 
 // GetOrCreateUser combines getting and creating user in one operation
 func GetOrCreateUser(update tgbotapi.Update) (User, bool, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
 	defer cancel()
 
 	message := update.Message

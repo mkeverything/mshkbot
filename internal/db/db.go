@@ -16,6 +16,8 @@ import (
 	"github.com/sukalov/mshkbot/internal/utils"
 )
 
+const queryTimeout = 15 * time.Second
+
 var (
 	Database *gorm.DB
 	once     sync.Once
@@ -38,9 +40,10 @@ func init() {
 		}
 
 		// connection pool configuration
-		sqlDB.SetMaxOpenConns(25)
-		sqlDB.SetMaxIdleConns(25)
+		sqlDB.SetMaxOpenConns(10)
+		sqlDB.SetMaxIdleConns(5)
 		sqlDB.SetConnMaxLifetime(5 * time.Minute)
+		sqlDB.SetConnMaxIdleTime(1 * time.Minute)
 
 		// verifying database connection
 		if pingErr := sqlDB.Ping(); pingErr != nil {
