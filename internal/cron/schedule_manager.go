@@ -81,6 +81,83 @@ func getHardcodedDefaults() []*ScheduledEvent {
 	}
 }
 
+func scheduleWeekdays() []time.Weekday {
+	return []time.Weekday{
+		time.Monday,
+		time.Tuesday,
+		time.Wednesday,
+		time.Thursday,
+		time.Friday,
+		time.Saturday,
+		time.Sunday,
+	}
+}
+
+func weekdayID(weekday time.Weekday) string {
+	switch weekday {
+	case time.Monday:
+		return "monday"
+	case time.Tuesday:
+		return "tuesday"
+	case time.Wednesday:
+		return "wednesday"
+	case time.Thursday:
+		return "thursday"
+	case time.Friday:
+		return "friday"
+	case time.Saturday:
+		return "saturday"
+	case time.Sunday:
+		return "sunday"
+	default:
+		return ""
+	}
+}
+
+func weekdayName(weekday time.Weekday) string {
+	switch weekday {
+	case time.Monday:
+		return "понедельник"
+	case time.Tuesday:
+		return "вторник"
+	case time.Wednesday:
+		return "среда"
+	case time.Thursday:
+		return "четверг"
+	case time.Friday:
+		return "пятница"
+	case time.Saturday:
+		return "суббота"
+	case time.Sunday:
+		return "воскресенье"
+	default:
+		return ""
+	}
+}
+
+func WeekdayFromID(id string) (time.Weekday, bool) {
+	for _, weekday := range scheduleWeekdays() {
+		if weekdayID(weekday) == id {
+			return weekday, true
+		}
+	}
+	return time.Sunday, false
+}
+
+func newScheduledEvent(weekday time.Weekday) *ScheduledEvent {
+	return &ScheduledEvent{
+		ID:            weekdayID(weekday),
+		Day:           weekdayName(weekday),
+		Weekday:       weekday,
+		StartHour:     12,
+		EndHour:       21,
+		Limit:         24,
+		LichessLimit:  0,
+		ChesscomLimit: 0,
+		Intro:         "запись на турнир открыта! нажмите /checkin чтобы записаться",
+	}
+}
+
 func (sm *ScheduleManager) GetDefaultEvents() []*ScheduledEvent {
 	ctx := context.Background()
 	data, err := redis.Client.Get(ctx, "schedule_defaults").Bytes()
@@ -118,9 +195,12 @@ func (sm *ScheduleManager) SaveCurrentAsDefaults() error {
 		return fmt.Errorf("no current schedule")
 	}
 
-	cleanEvents := make([]*ScheduledEvent, len(sm.current.Events))
-	for i, e := range sm.current.Events {
-		cleanEvents[i] = &ScheduledEvent{
+	cleanEvents := make([]*ScheduledEvent, 0, len(sm.current.Events))
+	for _, e := range sm.current.Events {
+		if e.Deleted {
+			continue
+		}
+		cleanEvents = append(cleanEvents, &ScheduledEvent{
 			ID:            e.ID,
 			Day:           e.Day,
 			Weekday:       e.Weekday,
@@ -131,7 +211,7 @@ func (sm *ScheduleManager) SaveCurrentAsDefaults() error {
 			ChesscomLimit: e.ChesscomLimit,
 			Intro:         e.Intro,
 			Deleted:       false,
-		}
+		})
 	}
 
 	return sm.SaveDefaultEvents(cleanEvents)
@@ -215,6 +295,33 @@ func (sm *ScheduleManager) RestoreEvent(eventID string) bool {
 		}
 	}
 	return false
+}
+
+func (sm *ScheduleManager) AddEvent(weekday time.Weekday) (*ScheduledEvent, bool) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	if sm.current == nil {
+		return nil, false
+	}
+
+	eventID := weekdayID(weekday)
+	if eventID == "" {
+		return nil, false
+	}
+
+	for _, e := range sm.current.Events {
+		if e.ID == eventID {
+			if e.Deleted {
+				e.Deleted = false
+				return e, true
+			}
+			return e, false
+		}
+	}
+
+	event := newScheduledEvent(weekday)
+	sm.current.Events = append(sm.current.Events, event)
+	return event, true
 }
 
 func (sm *ScheduleManager) GetEvent(eventID string) *ScheduledEvent {
@@ -388,6 +495,7 @@ func GetScheduleMainKeyboard() tgbotapi.InlineKeyboardMarkup {
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("редактировать", "schedule:edit"),
+			tgbotapi.NewInlineKeyboardButtonData("добавить", "schedule:add"),
 			tgbotapi.NewInlineKeyboardButtonData("удалить", "schedule:delete"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
@@ -396,17 +504,67 @@ func GetScheduleMainKeyboard() tgbotapi.InlineKeyboardMarkup {
 	)
 }
 
-func GetScheduleSelectEventKeyboard(action string) tgbotapi.InlineKeyboardMarkup {
-	return tgbotapi.NewInlineKeyboardMarkup(
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("понедельник", fmt.Sprintf("schedule:%s:monday", action)),
-			tgbotapi.NewInlineKeyboardButtonData("вторник", fmt.Sprintf("schedule:%s:tuesday", action)),
-			tgbotapi.NewInlineKeyboardButtonData("среда", fmt.Sprintf("schedule:%s:wednesday", action)),
-		),
-		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("<< назад", "schedule:back"),
-		),
-	)
+func (sm *ScheduleManager) GetScheduleSelectEventKeyboard(action string) tgbotapi.InlineKeyboardMarkup {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	var rows [][]tgbotapi.InlineKeyboardButton
+	var row []tgbotapi.InlineKeyboardButton
+	if sm.current != nil {
+		for _, e := range sm.current.Events {
+			if e.Deleted {
+				continue
+			}
+			row = append(row, tgbotapi.NewInlineKeyboardButtonData(e.Day, fmt.Sprintf("schedule:%s:%s", action, e.ID)))
+			if len(row) == 2 {
+				rows = append(rows, row)
+				row = nil
+			}
+		}
+	}
+	if len(row) > 0 {
+		rows = append(rows, row)
+	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("<< назад", "schedule:back"),
+	))
+
+	return tgbotapi.NewInlineKeyboardMarkup(rows...)
+}
+
+func (sm *ScheduleManager) GetAddEventKeyboard() tgbotapi.InlineKeyboardMarkup {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	activeWeekdays := map[time.Weekday]bool{}
+	if sm.current != nil {
+		for _, e := range sm.current.Events {
+			if !e.Deleted {
+				activeWeekdays[e.Weekday] = true
+			}
+		}
+	}
+
+	var rows [][]tgbotapi.InlineKeyboardButton
+	var row []tgbotapi.InlineKeyboardButton
+	for _, weekday := range scheduleWeekdays() {
+		if activeWeekdays[weekday] {
+			continue
+		}
+		row = append(row, tgbotapi.NewInlineKeyboardButtonData(weekdayName(weekday), fmt.Sprintf("schedule:add_event:%s", weekdayID(weekday))))
+		if len(row) == 2 {
+			rows = append(rows, row)
+			row = nil
+		}
+	}
+	if len(row) > 0 {
+		rows = append(rows, row)
+	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("<< назад", "schedule:back"),
+	))
+
+	return tgbotapi.NewInlineKeyboardMarkup(rows...)
 }
 
 func (sm *ScheduleManager) GetDeleteEventKeyboard() tgbotapi.InlineKeyboardMarkup {

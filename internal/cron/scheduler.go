@@ -49,26 +49,15 @@ func (s *Scheduler) Start() {
 		s.sendSchedulePreview()
 	})
 
-	s.scheduleWeekly(time.Monday, 12, 0, func() {
-		s.scheduledTournamentStartFromSchedule(time.Monday)
-	})
-	s.scheduleWeekly(time.Monday, 21, 0, func() {
-		s.scheduledTournamentEndFromSchedule(time.Monday)
-	})
-
-	s.scheduleWeekly(time.Tuesday, 12, 0, func() {
-		s.scheduledTournamentStartFromSchedule(time.Tuesday)
-	})
-	s.scheduleWeekly(time.Tuesday, 21, 0, func() {
-		s.scheduledTournamentEndFromSchedule(time.Tuesday)
-	})
-
-	s.scheduleWeekly(time.Wednesday, 12, 0, func() {
-		s.scheduledTournamentStartFromSchedule(time.Wednesday)
-	})
-	s.scheduleWeekly(time.Wednesday, 21, 0, func() {
-		s.scheduledTournamentEndFromSchedule(time.Wednesday)
-	})
+	for _, weekday := range scheduleWeekdays() {
+		weekday := weekday
+		s.scheduleWeekly(weekday, 12, 0, func() {
+			s.scheduledTournamentStartFromSchedule(weekday)
+		})
+		s.scheduleWeekly(weekday, 21, 0, func() {
+			s.scheduledTournamentEndFromSchedule(weekday)
+		})
+	}
 
 	// Start planned tournament checker
 	s.startPlannedTournamentChecker()

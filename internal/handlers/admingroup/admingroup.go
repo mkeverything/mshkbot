@@ -674,6 +674,8 @@ func handleScheduleCallback(b *bot.Bot, update tgbotapi.Update) error {
 		return handleScheduleApprove(b, chatID, messageID)
 	case "edit":
 		return handleScheduleShowEditEvents(b, chatID, messageID)
+	case "add":
+		return handleScheduleShowAddEvents(b, chatID, messageID)
 	case "delete":
 		return handleScheduleShowDeleteEvents(b, chatID, messageID)
 	case "back":
@@ -683,6 +685,11 @@ func handleScheduleCallback(b *bot.Bot, update tgbotapi.Update) error {
 			return fmt.Errorf("missing event id")
 		}
 		return handleScheduleSelectEditEvent(b, chatID, messageID, parts[2])
+	case "add_event":
+		if len(parts) < 3 {
+			return fmt.Errorf("missing weekday")
+		}
+		return handleScheduleAddEvent(b, chatID, messageID, parts[2])
 	case "delete_event":
 		if len(parts) < 3 {
 			return fmt.Errorf("missing event id")
@@ -723,7 +730,15 @@ func handleScheduleSaveDefaults(b *bot.Bot, chatID int64, messageID int) error {
 func handleScheduleShowEditEvents(b *bot.Bot, chatID int64, messageID int) error {
 	message := scheduler.ScheduleManager.FormatScheduleMessage()
 	message += "\n\n*выберите турнир для редактирования:*"
-	keyboard := cron.GetScheduleSelectEventKeyboard("edit_event")
+	keyboard := scheduler.ScheduleManager.GetScheduleSelectEventKeyboard("edit_event")
+
+	return b.EditMessageWithButtons(chatID, messageID, message, keyboard)
+}
+
+func handleScheduleShowAddEvents(b *bot.Bot, chatID int64, messageID int) error {
+	message := scheduler.ScheduleManager.FormatScheduleMessage()
+	message += "\n\n*выберите день для добавления:*"
+	keyboard := scheduler.ScheduleManager.GetAddEventKeyboard()
 
 	return b.EditMessageWithButtons(chatID, messageID, message, keyboard)
 }
@@ -740,6 +755,23 @@ func handleScheduleBack(b *bot.Bot, chatID int64, messageID int) error {
 	scheduler.ScheduleManager.ClearEditingState()
 
 	message := scheduler.ScheduleManager.FormatScheduleMessage()
+	keyboard := cron.GetScheduleMainKeyboard()
+
+	return b.EditMessageWithButtons(chatID, messageID, message, keyboard)
+}
+
+func handleScheduleAddEvent(b *bot.Bot, chatID int64, messageID int, weekdayID string) error {
+	weekday, ok := cron.WeekdayFromID(weekdayID)
+	if !ok {
+		return b.EditMessage(chatID, messageID, "день не найден")
+	}
+
+	if _, ok = scheduler.ScheduleManager.AddEvent(weekday); !ok {
+		return b.EditMessage(chatID, messageID, "турнир уже есть в расписании")
+	}
+
+	message := scheduler.ScheduleManager.FormatScheduleMessage()
+	message += "\n\n*турнир добавлен. его можно отредактировать и сохранить как дефолт.*"
 	keyboard := cron.GetScheduleMainKeyboard()
 
 	return b.EditMessageWithButtons(chatID, messageID, message, keyboard)
